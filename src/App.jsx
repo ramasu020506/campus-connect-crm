@@ -94,7 +94,7 @@ export default function App() {
   // ----------------------------------------------------
   const [tenants, setTenants] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_tenants_v5');
+      const saved = localStorage.getItem('cc_saas_tenants_v6');
       return saved ? JSON.parse(saved) : INITIAL_TENANTS;
     } catch {
       return INITIAL_TENANTS;
@@ -103,7 +103,7 @@ export default function App() {
 
   const [activeTenantId, setActiveTenantId] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_active_tenant_id_v5');
+      const saved = localStorage.getItem('cc_saas_active_tenant_id_v6');
       return saved || INITIAL_TENANTS[0]?.id || 'TNT-84012';
     } catch {
       return INITIAL_TENANTS[0]?.id || 'TNT-84012';
@@ -116,7 +116,7 @@ export default function App() {
 
   const [users, setUsers] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_users_v5');
+      const saved = localStorage.getItem('cc_saas_users_v6');
       return saved ? JSON.parse(saved) : INITIAL_USERS;
     } catch {
       return INITIAL_USERS;
@@ -126,7 +126,7 @@ export default function App() {
   // Normalized SaaS User-Branch Many-to-Many Relational Access Mapping
   const [userBranchAccess, setUserBranchAccess] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_user_branch_access_v5');
+      const saved = localStorage.getItem('cc_saas_user_branch_access_v6');
       return saved ? JSON.parse(saved) : INITIAL_USER_BRANCH_ACCESS;
     } catch {
       return INITIAL_USER_BRANCH_ACCESS;
@@ -136,7 +136,7 @@ export default function App() {
   // Current Logged-in User (default: Rajesh Kumar usr-103: Default Branch B, Optional Branches A & C, Multi-Group)
   const [currentUserId, setCurrentUserId] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_current_user_id_v5');
+      const saved = localStorage.getItem('cc_saas_current_user_id_v6');
       return saved || 'usr-103';
     } catch {
       return 'usr-103';
@@ -154,7 +154,7 @@ export default function App() {
   // Organizations & Branches
   const [organizations, setOrganizations] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_organizations_v5');
+      const saved = localStorage.getItem('cc_saas_organizations_v6');
       return saved ? JSON.parse(saved) : INITIAL_ORGANIZATIONS;
     } catch {
       return INITIAL_ORGANIZATIONS;
@@ -166,7 +166,7 @@ export default function App() {
   // ----------------------------------------------------
   const [courses, setCourses] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_courses_v5');
+      const saved = localStorage.getItem('cc_saas_courses_v6');
       return saved ? JSON.parse(saved) : INITIAL_COURSES;
     } catch {
       return INITIAL_COURSES;
@@ -175,7 +175,7 @@ export default function App() {
 
   const [classes, setClasses] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_classes_v5');
+      const saved = localStorage.getItem('cc_saas_classes_v6');
       return saved ? JSON.parse(saved) : INITIAL_CLASSES;
     } catch {
       return INITIAL_CLASSES;
@@ -184,7 +184,7 @@ export default function App() {
 
   const [groups, setGroups] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_groups_v5');
+      const saved = localStorage.getItem('cc_saas_groups_v6');
       return saved ? JSON.parse(saved) : INITIAL_GROUPS;
     } catch {
       return INITIAL_GROUPS;
@@ -194,7 +194,7 @@ export default function App() {
   // Leads
   const [leads, setLeads] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_leads_v5');
+      const saved = localStorage.getItem('cc_saas_leads_v6');
       return saved ? JSON.parse(saved) : INITIAL_LEADS;
     } catch {
       return INITIAL_LEADS;
@@ -204,7 +204,7 @@ export default function App() {
   // Configurable Drop / Lost Reasons (Tenant Admin Customizable)
   const [dropReasons, setDropReasons] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_drop_reasons_v5');
+      const saved = localStorage.getItem('cc_saas_drop_reasons_v6');
       return saved ? JSON.parse(saved) : INITIAL_DROP_REASONS;
     } catch {
       return INITIAL_DROP_REASONS;
@@ -214,7 +214,7 @@ export default function App() {
   // Branch Operations & Activities Stream (Multi-Branch activity tracking)
   const [branchActivities, setBranchActivities] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_activities_v5');
+      const saved = localStorage.getItem('cc_saas_activities_v6');
       return saved ? JSON.parse(saved) : INITIAL_BRANCH_ACTIVITIES;
     } catch {
       return INITIAL_BRANCH_ACTIVITIES;
@@ -224,7 +224,7 @@ export default function App() {
   // Address & Attendance Field Configuration Options
   const [addressConfig, setAddressConfig] = useState(() => {
     try {
-      const saved = localStorage.getItem('cc_saas_address_config_v5');
+      const saved = localStorage.getItem('cc_saas_address_config_v6');
       return saved
         ? JSON.parse(saved)
         : {
@@ -293,55 +293,55 @@ export default function App() {
 
   // Save to LocalStorage
   useEffect(() => {
-    localStorage.setItem('cc_saas_tenants_v5', JSON.stringify(tenants));
+    localStorage.setItem('cc_saas_tenants_v6', JSON.stringify(tenants));
   }, [tenants]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_active_tenant_id_v5', activeTenantId);
+    localStorage.setItem('cc_saas_active_tenant_id_v6', activeTenantId);
   }, [activeTenantId]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_users_v5', JSON.stringify(users));
+    localStorage.setItem('cc_saas_users_v6', JSON.stringify(users));
   }, [users]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_user_branch_access_v5', JSON.stringify(userBranchAccess));
+    localStorage.setItem('cc_saas_user_branch_access_v6', JSON.stringify(userBranchAccess));
   }, [userBranchAccess]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_current_user_id_v5', currentUserId);
+    localStorage.setItem('cc_saas_current_user_id_v6', currentUserId);
   }, [currentUserId]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_organizations_v5', JSON.stringify(organizations));
+    localStorage.setItem('cc_saas_organizations_v6', JSON.stringify(organizations));
   }, [organizations]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_courses_v5', JSON.stringify(courses));
+    localStorage.setItem('cc_saas_courses_v6', JSON.stringify(courses));
   }, [courses]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_classes_v5', JSON.stringify(classes));
+    localStorage.setItem('cc_saas_classes_v6', JSON.stringify(classes));
   }, [classes]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_groups_v5', JSON.stringify(groups));
+    localStorage.setItem('cc_saas_groups_v6', JSON.stringify(groups));
   }, [groups]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_leads_v5', JSON.stringify(leads));
+    localStorage.setItem('cc_saas_leads_v6', JSON.stringify(leads));
   }, [leads]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_drop_reasons_v5', JSON.stringify(dropReasons));
+    localStorage.setItem('cc_saas_drop_reasons_v6', JSON.stringify(dropReasons));
   }, [dropReasons]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_activities_v5', JSON.stringify(branchActivities));
+    localStorage.setItem('cc_saas_activities_v6', JSON.stringify(branchActivities));
   }, [branchActivities]);
 
   useEffect(() => {
-    localStorage.setItem('cc_saas_address_config_v5', JSON.stringify(addressConfig));
+    localStorage.setItem('cc_saas_address_config_v6', JSON.stringify(addressConfig));
   }, [addressConfig]);
 
   // If logged in as Teacher or PRVO, auto-switch to Mobile View on mount or role change

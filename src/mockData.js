@@ -145,7 +145,7 @@ export const INITIAL_USERS = [
     role: "super_admin",
     password: "SuperAdmin@2026",
     phone: "+91 98765 00001",
-    assignedBranchIds: ["branch-1", "branch-2", "branch-3", "branch-4", "branch-5", "branch-6"],
+    assignedBranchIds: ["branch-1", "branch-2", "branch-3", "branch-4"],
     primaryBranchId: "branch-1", // Compulsory Default Branch
     assignedGroupIds: ["grp-1", "grp-2", "grp-3", "grp-4", "grp-5", "grp-6", "grp-7"],
     status: "Active",
@@ -258,18 +258,32 @@ export const INITIAL_USERS = [
     designation: "Field Admissions PRVO",
     area: "Indiranagar",
   },
+  {
+    id: "usr-109",
+    tenantId: "TNT-84012",
+    name: "Deepak Sharma",
+    email: "deepak.sharma@beacon.edu",
+    role: "branch_manager",
+    password: "Deepak#Manager26",
+    phone: "+91 98765 00009",
+    assignedBranchIds: ["branch-4"],
+    primaryBranchId: "branch-4", // Auto-defaulted single branch
+    assignedGroupIds: ["grp-6"],
+    status: "Active",
+    lastLogin: "2026-11-18 11:15",
+    designation: "Campus Administrator",
+    area: "Gachibowli",
+  },
 ];
 
 // 3B. Relational User-Branch Access Mapping (Many-to-Many Architecture)
 // Represents the normalized user_branch_access SaaS schema with compulsory default branch flag
 export const INITIAL_USER_BRANCH_ACCESS = [
-  // Dr. Dean Sterling (usr-101) - Super Admin: access to all branches, Default: branch-1
+  // Dr. Dean Sterling (usr-101) - Super Admin: access to branches 1-4, Default: branch-1
   { id: "uba-101-1", tenantId: "TNT-84012", userId: "usr-101", branchId: "branch-1", isDefault: true, createdAt: "2026-01-15", updatedAt: "2026-01-15" },
   { id: "uba-101-2", tenantId: "TNT-84012", userId: "usr-101", branchId: "branch-2", isDefault: false, createdAt: "2026-01-15", updatedAt: "2026-01-15" },
   { id: "uba-101-3", tenantId: "TNT-84012", userId: "usr-101", branchId: "branch-3", isDefault: false, createdAt: "2026-01-15", updatedAt: "2026-01-15" },
   { id: "uba-101-4", tenantId: "TNT-84012", userId: "usr-101", branchId: "branch-4", isDefault: false, createdAt: "2026-01-15", updatedAt: "2026-01-15" },
-  { id: "uba-101-5", tenantId: "TNT-84012", userId: "usr-101", branchId: "branch-5", isDefault: false, createdAt: "2026-01-15", updatedAt: "2026-01-15" },
-  { id: "uba-101-6", tenantId: "TNT-84012", userId: "usr-101", branchId: "branch-6", isDefault: false, createdAt: "2026-01-15", updatedAt: "2026-01-15" },
 
   // Priya Patel (usr-102) - Tenant Admin: branches 1, 2, 3. Default: branch-1
   { id: "uba-102-1", tenantId: "TNT-84012", userId: "usr-102", branchId: "branch-1", isDefault: true, createdAt: "2026-01-15", updatedAt: "2026-01-15" },
@@ -298,9 +312,12 @@ export const INITIAL_USER_BRANCH_ACCESS = [
 
   // Kavita Reddy (usr-108) - PRVO: Branch A (branch-1). Default: branch-1
   { id: "uba-108-1", tenantId: "TNT-84012", userId: "usr-108", branchId: "branch-1", isDefault: true, createdAt: "2026-01-15", updatedAt: "2026-01-15" },
+
+  // Deepak Sharma (usr-109) - Single Branch Org Admin: Branch 4 only. Default: branch-4
+  { id: "uba-109-4", tenantId: "TNT-84012", userId: "usr-109", branchId: "branch-4", isDefault: true, createdAt: "2026-04-10", updatedAt: "2026-04-10" },
 ];
 
-// 4. Organizations and Branches
+// 4. Organizations and Branches (Exactly 1 Org with 3 Branches, 1 Org with Single Branch)
 export const INITIAL_ORGANIZATIONS = [
   {
     id: "org-101",
@@ -351,32 +368,6 @@ export const INITIAL_ORGANIZATIONS = [
         isDefault: true,
         city: "Hyderabad",
         address: "Gachibowli Financial District",
-      },
-      {
-        id: "branch-5",
-        name: "East Hills Extension",
-        code: "EHE",
-        isDefault: false,
-        city: "Hyderabad",
-        address: "Uppal Science Corridor",
-      },
-    ],
-  },
-  {
-    id: "org-103",
-    tenantId: "TNT-84012",
-    name: "Apex School of Business & Management",
-    code: "ASBM",
-    type: "Postgraduate & Executive Education",
-    defaultBranchId: "branch-6",
-    branches: [
-      {
-        id: "branch-6",
-        name: "Executive Tower Campus",
-        code: "ETC",
-        isDefault: true,
-        city: "Mumbai",
-        address: "Bandra Kurla Complex (BKC)",
       },
     ],
   },
@@ -539,8 +530,8 @@ export const INITIAL_CLASSES = [
     id: "cls-5",
     tenantId: "TNT-84012",
     courseId: "crs-105",
-    orgId: "org-103",
-    branchId: "branch-6",
+    orgId: "org-101",
+    branchId: "branch-3",
     name: "Executive MBA - Cohort 14",
     code: "EMBA-14",
     department: "Executive Management",
@@ -908,8 +899,8 @@ export const INITIAL_LEADS = [
   {
     id: "CC-1005",
     tenantId: "TNT-84012",
-    orgId: "org-103",
-    branchId: "branch-6",
+    orgId: "org-101",
+    branchId: "branch-3",
     courseId: "crs-105",
     classId: "cls-5",
     groupId: "grp-7",
@@ -921,7 +912,7 @@ export const INITIAL_LEADS = [
     course: "Executive MBA - Global Leadership",
     className: "Executive MBA - Cohort 14",
     groupName: "Syndicate Group Alpha (Fintech Immersion)",
-    campus: "Executive Tower Campus",
+    campus: "Downtown City Center",
     status: "Admitted",
     priority: "Medium",
     address: "Sector 14, Outer Ring Road",
