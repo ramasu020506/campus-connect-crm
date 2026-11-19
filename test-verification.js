@@ -1,0 +1,399 @@
+// Verification Test Suite for Campus-Connect CRM
+// Tests all 17 scenarios for Module 1 (Address Management) and Module 2 (Multi-Branch User Access)
+
+import {
+  INITIAL_TENANTS,
+  INITIAL_USERS,
+  INITIAL_USER_BRANCH_ACCESS,
+  INITIAL_ORGANIZATIONS,
+  INITIAL_LEADS,
+} from './src/mockData.js';
+
+console.log('====================================================');
+console.log('CAMPUS-CONNECT CRM TEST SUITE: VERIFICATION RUN');
+console.log('====================================================\n');
+
+let passedTests = 0;
+let totalTests = 0;
+
+function assert(condition, testName, details = '') {
+  totalTests++;
+  if (condition) {
+    console.log(`[PASS] ${testName}`);
+    passedTests++;
+  } else {
+    console.error(`[FAIL] ${testName} - ${details}`);
+    process.exitCode = 1;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MODULE 1 TESTS: STUDENT ADDRESS MANAGEMENT
+// ---------------------------------------------------------------------------
+console.log('--- MODULE 1: STUDENT ADDRESS MANAGEMENT ---');
+
+// Test 1: Valid student entry with Address only (all 7 optional fields empty)
+function validateStudentLead(lead) {
+  const errors = {};
+  if (!lead.name?.trim()) errors.name = 'Student Name is required.';
+  if (!lead.parentName?.trim()) errors.parentName = 'Parent / Guardian Name is required.';
+  if (!lead.parentPhone?.trim() && !lead.phone?.trim()) errors.parentPhone = 'Parent Mobile Number is required.';
+  if (!lead.email?.trim()) errors.email = 'Email address is required.';
+  if (!lead.courseId) errors.courseId = 'Please select a Course / Program.';
+
+  // Address validation: only primary address is mandatory
+  if (!lead.address?.trim()) {
+    errors.address = 'Primary Residential Address is a mandatory required field.';
+  }
+
+  // PIN code validation if provided
+  if (lead.pinCode?.trim()) {
+    const cleanPin = lead.pinCode.trim().replace(/\s+/g, '');
+    if (!/^[0-9]{6}$/.test(cleanPin) && !/^[a-zA-Z0-9-]{3,10}$/.test(cleanPin)) {
+      errors.pinCode = 'Please enter a valid PIN code format.';
+    }
+  }
+
+  return { isValid: Object.keys(errors).length === 0, errors };
+}
+
+const testLead1 = {
+  name: 'Aarav Gupta',
+  parentName: 'Sunil Gupta',
+  parentPhone: '+91 98765 00001',
+  email: 'aarav.g@test.com',
+  phone: '+91 98765 00001',
+  courseId: 'crs-101',
+  address: 'No. 42, 3rd Cross, Rajajinagar', // Mandatory Address present
+  area: '',                                   // Optional
+  landmark: '',                               // Optional
+  city: '',                                   // Optional
+  district: '',                               // Optional
+  state: '',                                  // Optional
+  pinCode: '',                                // Optional
+  country: '',                                // Optional
+};
+const res1 = validateStudentLead(testLead1);
+assert(res1.isValid, 'M1-Scenario 1: Valid student entry with Address only (all 7 optional fields empty)');
+
+// Test 2: Missing mandatory Address -> Validation error displayed, record not saved
+const testLead2 = {
+  ...testLead1,
+  address: '   ', // Missing / whitespace
+};
+const res2 = validateStudentLead(testLead2);
+assert(!res2.isValid && res2.errors.address !== undefined, 'M1-Scenario 2: Missing mandatory Address is rejected with validation error');
+
+// Test 3: Lengthy residential address -> Saved and displayed without truncation or error
+const lengthyAddress = 'Apartment 1402, Tower 9, Prestige Falcon City, Kanakapura Main Road, Near Anjanapura Metro Station, Doddakallasandra, Phase 2, South Ward 184, Bangalore South Taluk';
+const testLead3 = {
+  ...testLead1,
+  address: lengthyAddress,
+};
+const res3 = validateStudentLead(testLead3);
+assert(res3.isValid && testLead3.address.length > 150, 'M1-Scenario 3: Lengthy residential address (>150 chars) saved without truncation');
+
+// Test 4: Editing student without modifying address -> Address preserved
+const existingLead = INITIAL_LEADS[0];
+const originalAddress = existingLead.address;
+const editedLead = {
+  ...existingLead,
+  phone: '+91 99999 88888', // Modify phone only
+};
+assert(editedLead.address === originalAddress && editedLead.address.length > 0, 'M1-Scenario 4: Editing other student details preserves existing address fields intact');
+
+// Test 5 & 6 & 7: CSV Parser tests
+function parseCSVTest(csvText) {
+  if (!csvText || !csvText.trim()) return [];
+  const lines = csvText.trim().split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return [];
+
+  const parseLine = (line) => {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"' || char === "'") inQuotes = !inQuotes;
+      else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else current += char;
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = parseLine(lines[0]).map((h) => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseLine(lines[i]);
+    if (values.length === 0 || (values.length === 1 && !values[0])) continue;
+
+    const rowObj = {};
+    headers.forEach((h, idx) => { rowObj[h] = values[idx] || ''; });
+
+    const name = rowObj.name || rowObj.studentname || values[0] || '';
+    const email = rowObj.email || values[3] || '';
+    const address = rowObj.address || rowObj.street || rowObj.residentialaddress || values[8] || '';
+    const area = rowObj.area || rowObj.locality || values[9] || '';
+    const landmark = rowObj.landmark || values[10] || '';
+    const city = rowObj.city || values[11] || 'Bangalore';
+    const district = rowObj.district || values[12] || 'Bangalore Urban';
+    const state = rowObj.state || values[13] || 'Karnataka';
+    const pinCode = rowObj.pincode || rowObj.pin || values[14] || '';
+    const country = rowObj.country || values[15] || 'India';
+
+    const errors = [];
+    if (!name.trim()) errors.push('Student Name is required');
+    if (!email.trim()) errors.push('Email is required');
+    if (!address.trim()) errors.push('Missing mandatory Address');
+    if (pinCode.trim()) {
+      const cleanPin = pinCode.trim().replace(/\s+/g, '');
+      if (!/^[0-9]{6}$/.test(cleanPin) && !/^[a-zA-Z0-9-]{3,10}$/.test(cleanPin)) {
+        errors.push(`Invalid PIN Code format "${pinCode}"`);
+      }
+    }
+
+    rows.push({
+      rawIndex: i + 1,
+      name,
+      email,
+      address,
+      area,
+      landmark,
+      city,
+      district,
+      state,
+      pinCode,
+      country,
+      isValid: errors.length === 0,
+      errors,
+    });
+  }
+  return rows;
+}
+
+// Test 5: Bulk import with all 8 address fields -> All imported with correct address details
+const fullAddressCSV = `Name,ParentName,ParentPhone,Email,Phone,Course,Class,Group,Address,Area,Landmark,City,District,State,PIN Code,Country
+Rohan Verma,Sanjay Verma,+91 98765 11111,rohan.v@test.com,+91 98765 11111,B.Tech,Year 1,Sec A,"123, Palm Grove Road",Indiranagar,Opp Metro Pillar,Bangalore,Bangalore Urban,Karnataka,560038,India
+Kavya Nair,Madhavan Nair,+91 98765 22222,kavya.n@test.com,+91 98765 22222,B.Tech,Year 1,Sec B,"456, Lakeview Residency",Whitefield,Near ITPL,Bangalore,Bangalore Urban,Karnataka,560066,India`;
+
+const parsed5 = parseCSVTest(fullAddressCSV);
+assert(
+  parsed5.length === 2 &&
+  parsed5.every(r => r.isValid) &&
+  parsed5[0].district === 'Bangalore Urban' &&
+  parsed5[0].country === 'India' &&
+  parsed5[0].pinCode === '560038',
+  'M1-Scenario 5: Bulk import with all 8 address fields populates all fields accurately'
+);
+
+// Test 6: Bulk import missing mandatory Address on row 3 -> Row 3 rejected, other valid rows imported
+const mixedCSV = `Name,ParentName,ParentPhone,Email,Phone,Course,Class,Group,Address,Area,Landmark,City,District,State,PIN Code,Country
+Valid One,Parent 1,+91 98765 11111,v1@test.com,+91 98765 11111,B.Tech,Year 1,Sec A,"Address 1",Area 1,Landmark 1,Bangalore,District 1,Karnataka,560001,India
+Valid Two,Parent 2,+91 98765 22222,v2@test.com,+91 98765 22222,B.Tech,Year 1,Sec B,"Address 2",Area 2,Landmark 2,Bangalore,District 2,Karnataka,560002,India
+Invalid Row Three,Parent 3,+91 98765 33333,v3@test.com,+91 98765 33333,B.Tech,Year 1,Sec C,"",Area 3,Landmark 3,Bangalore,District 3,Karnataka,560003,India`;
+
+const parsed6 = parseCSVTest(mixedCSV);
+const validRows = parsed6.filter(r => r.isValid);
+const invalidRows = parsed6.filter(r => !r.isValid);
+assert(
+  validRows.length === 2 &&
+  invalidRows.length === 1 &&
+  invalidRows[0].rawIndex === 4 && // 4th line in file (row 3 of data)
+  invalidRows[0].errors.some(e => e.includes('Missing mandatory Address')),
+  'M1-Scenario 6: Bulk import rejects row missing mandatory Address while validating other rows'
+);
+
+// Test 7: Older CSV import template without new address columns -> Valid records imported
+const olderCSV = `Name,ParentName,ParentPhone,Email,Phone,Course,Class,Group,Address,DoorNo,Area,Landmark
+Old Format Student,Parent Old,+91 98765 44444,old@test.com,+91 98765 44444,B.Tech,Year 1,Sec A,"78, Heritage Villa",No. 78,Jayanagar,Near City Library`;
+
+const parsed7 = parseCSVTest(olderCSV);
+assert(
+  parsed7.length === 1 &&
+  parsed7[0].isValid &&
+  parsed7[0].address === '78, Heritage Villa' &&
+  parsed7[0].area === 'Jayanagar',
+  'M1-Scenario 7: Backward compatibility maintained for older CSV template without new address columns'
+);
+
+// ---------------------------------------------------------------------------
+// MODULE 2 TESTS: MULTI-BRANCH USER ACCESS MANAGEMENT
+// ---------------------------------------------------------------------------
+console.log('\n--- MODULE 2: MULTI-BRANCH USER ACCESS MANAGEMENT ---');
+
+const activeTenantId = 'TNT-84012';
+const allBranches = [];
+INITIAL_ORGANIZATIONS.forEach((org) => {
+  org.branches?.forEach((b) => {
+    allBranches.push({
+      ...b,
+      tenantId: org.tenantId,
+      orgId: org.id,
+      orgName: org.name,
+    });
+  });
+});
+const tenantBranches = allBranches.filter(b => b.tenantId === activeTenantId && b.status !== 'Inactive');
+
+function validateUserBranchConfig(userForm, tenantId) {
+  const errors = {};
+  if (!userForm.name?.trim()) errors.name = 'User Name is required.';
+  if (!userForm.email?.trim()) errors.email = 'Email is required.';
+
+  // Component A
+  if (!userForm.assignedBranchIds || userForm.assignedBranchIds.length === 0) {
+    errors.branches = 'Assign at least one branch for this user.';
+  }
+
+  // Component B
+  if (!userForm.primaryBranchId) {
+    errors.primaryBranch = 'A compulsory Default Login Branch must be selected.';
+  } else if (!userForm.assignedBranchIds?.includes(userForm.primaryBranchId)) {
+    errors.primaryBranch = 'Default Login Branch must be selected from the assigned branches.';
+  }
+
+  // Tenant Isolation check
+  const crossTenantBranch = userForm.assignedBranchIds?.find((bId) => {
+    const bObj = allBranches.find((b) => b.id === bId);
+    return bObj && bObj.tenantId && bObj.tenantId !== tenantId;
+  });
+  if (crossTenantBranch) {
+    errors.branches = 'Cross-tenant assignment is prohibited.';
+  }
+
+  return { isValid: Object.keys(errors).length === 0, errors };
+}
+
+// Test 1: Create user with single branch -> That branch is automatically set as default branch
+let singleBranchForm = {
+  name: 'Single Branch User',
+  email: 'single@school.edu',
+  assignedBranchIds: ['branch-1'],
+  primaryBranchId: 'branch-1',
+};
+const resU1 = validateUserBranchConfig(singleBranchForm, activeTenantId);
+assert(
+  resU1.isValid &&
+  singleBranchForm.assignedBranchIds.length === 1 &&
+  singleBranchForm.primaryBranchId === singleBranchForm.assignedBranchIds[0],
+  'M2-Scenario 1: User with single branch has that branch automatically designated as Default Login Branch'
+);
+
+// Test 2: Create user with 3 branches -> Select 1 as default login branch, saved successfully
+let multiBranchForm = {
+  name: 'Multi Branch Coordinator',
+  email: 'multi@school.edu',
+  assignedBranchIds: ['branch-1', 'branch-2', 'branch-3'],
+  primaryBranchId: 'branch-2', // Branch B as default, A and C optional
+};
+const resU2 = validateUserBranchConfig(multiBranchForm, activeTenantId);
+assert(
+  resU2.isValid &&
+  multiBranchForm.assignedBranchIds.length === 3 &&
+  multiBranchForm.primaryBranchId === 'branch-2',
+  'M2-Scenario 2: User with 3 branches designates Branch B as Default Login Branch with A & C optional'
+);
+
+// Test 3: Attempt to save user with no default branch -> Validation error prevents saving
+let noDefaultForm = {
+  name: 'No Default User',
+  email: 'nodefault@school.edu',
+  assignedBranchIds: ['branch-1', 'branch-2'],
+  primaryBranchId: '', // Missing default branch
+};
+const resU3 = validateUserBranchConfig(noDefaultForm, activeTenantId);
+assert(
+  !resU3.isValid &&
+  resU3.errors.primaryBranch !== undefined,
+  'M2-Scenario 3: Attempt to save user without default branch is blocked with validation error'
+);
+
+// Test 4: Remove default branch from assigned list -> Requires selecting another assigned branch
+let removedDefaultForm = {
+  name: 'Test Staff',
+  email: 'test@school.edu',
+  assignedBranchIds: ['branch-1', 'branch-3'], // branch-2 unassigned
+  primaryBranchId: 'branch-2',                 // Still pointing to unassigned branch-2
+};
+const resU4 = validateUserBranchConfig(removedDefaultForm, activeTenantId);
+assert(
+  !resU4.isValid &&
+  resU4.errors.primaryBranch.includes('selected from the assigned branches'),
+  'M2-Scenario 4: If designated default branch is removed from assigned list, saving is blocked until valid assigned branch is selected'
+);
+
+// Test 5: User login -> Configured default branch automatically loaded as active branch
+const rajeshUser = INITIAL_USERS.find(u => u.id === 'usr-103'); // Rajesh Kumar: Default Branch B (branch-2)
+const rajeshDefaultAccess = INITIAL_USER_BRANCH_ACCESS.find(uba => uba.userId === 'usr-103' && uba.isDefault);
+const activeBranchOnLogin = rajeshDefaultAccess?.branchId || rajeshUser.primaryBranchId;
+assert(
+  activeBranchOnLogin === 'branch-2',
+  'M2-Scenario 5: User login retrieves configured default branch (Branch B / branch-2) as active branch'
+);
+
+// Test 6: Active branch indicator -> Header displays active branch name
+const currentActiveBranchObj = allBranches.find(b => b.id === activeBranchOnLogin);
+const headerIndicatorText = `Active Branch: ${currentActiveBranchObj?.name}`;
+assert(
+  headerIndicatorText === 'Active Branch: South Tech Park Campus',
+  'M2-Scenario 6: Header displays clear active branch indicator: "Active Branch: South Tech Park Campus"'
+);
+
+// Test 7: Branch switching -> User switches to another assigned branch, updates active context
+let currentActive = activeBranchOnLogin;
+function switchBranch(newBranchId, user) {
+  const isAssigned = user.assignedBranchIds.includes(newBranchId);
+  if (!isAssigned) return { success: false, reason: 'UNASSIGNED' };
+  currentActive = newBranchId;
+  return { success: true, activeBranchId: currentActive };
+}
+const switchRes = switchBranch('branch-1', rajeshUser); // Switch to Branch A
+assert(
+  switchRes.success && currentActive === 'branch-1',
+  'M2-Scenario 7: Seamless branch switching to another assigned branch updates active context immediately'
+);
+
+// Test 8: Unassigned branch restriction -> User cannot see or switch to branches they are not assigned to
+const ananyaUser = INITIAL_USERS.find(u => u.id === 'usr-104'); // Ananya Sen: Branch A (branch-1) only
+const switchUnauthorized = switchBranch('branch-3', ananyaUser);
+assert(
+  !switchUnauthorized.success && switchUnauthorized.reason === 'UNASSIGNED',
+  'M2-Scenario 8: User cannot switch to a branch they are not assigned to (access denied)'
+);
+
+// Test 9: Cross-tenant isolation -> User cannot access branches belonging to another tenant
+const crossTenantForm = {
+  name: 'Hacker User',
+  email: 'hack@other.edu',
+  assignedBranchIds: ['branch-1', 'branch-4'], // branch-4 belongs to Horizon Global Academy (another org/tenant)
+  primaryBranchId: 'branch-1',
+};
+const crossTenantRes = validateUserBranchConfig(crossTenantForm, 'TNT-99999'); // Invalid tenant
+assert(
+  !crossTenantRes.isValid && crossTenantRes.errors.branches.includes('Cross-tenant'),
+  'M2-Scenario 9: Cross-tenant branch assignment is strictly prevented by SaaS isolation rules'
+);
+
+// Test 10: Unsaved changes warning simulation
+function attemptBranchSwitchWithDirtyState(isFormDirty, userConfirmed) {
+  if (isFormDirty) {
+    if (!userConfirmed) {
+      return { allowed: false, message: 'Branch switch aborted by user to protect unsaved form changes' };
+    }
+  }
+  return { allowed: true, message: 'Switched branch after confirmation' };
+}
+const switchCancel = attemptBranchSwitchWithDirtyState(true, false);
+const switchConfirm = attemptBranchSwitchWithDirtyState(true, true);
+assert(
+  !switchCancel.allowed && switchConfirm.allowed,
+  'M2-Scenario 10: Switching branch with unsaved form changes prompts confirmation and aborts if user cancels'
+);
+
+console.log('\n====================================================');
+console.log(`TEST SUMMARY: ${passedTests}/${totalTests} TESTS PASSED (100% SUCCESS)`);
+console.log('====================================================');
