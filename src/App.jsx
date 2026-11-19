@@ -274,6 +274,11 @@ export default function App() {
   const [customizeDashboardModalOpen, setCustomizeDashboardModalOpen] = useState(false);
   const [settingsSuccessMessage, setSettingsSuccessMessage] = useState(null);
 
+  // Interactive Number Hover Preview & Drill-Down State
+  const [activeDrillDown, setActiveDrillDown] = useState(null); // { sectionId, drillId, title, count, items, subtitle }
+  const [hoveredNumber, setHoveredNumber] = useState(null); // { drillId, title, count, subtitle, previewSnippet }
+  const [drillDownSearch, setDrillDownSearch] = useState('');
+
   // Mobile App Mode State (PRV Staff Mobile View)
   const [isMobileViewMode, setIsMobileViewMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -657,6 +662,326 @@ export default function App() {
     }));
     setSettingsSuccessMessage(`Reset ${ROLE_DEFINITIONS[roleKey]?.label} dashboard to recommended defaults.`);
     setTimeout(() => setSettingsSuccessMessage(null), 3000);
+  };
+
+  // Interactive Number Drill-Down Trigger & Renderer
+  const handleTriggerDrillDown = (sectionId, drillId, title, count, items, subtitle = '') => {
+    if (activeDrillDown && activeDrillDown.drillId === drillId) {
+      setActiveDrillDown(null);
+    } else {
+      setActiveDrillDown({
+        sectionId,
+        drillId,
+        title,
+        count,
+        items: items || [],
+        subtitle,
+      });
+      setDrillDownSearch('');
+    }
+  };
+
+  const renderDrillDownPanel = (sectionId) => {
+    if (!activeDrillDown || activeDrillDown.sectionId !== sectionId) return null;
+
+    const query = drillDownSearch.trim().toLowerCase();
+    const rawItems = activeDrillDown.items || [];
+    const filtered = query
+      ? rawItems.filter((item) => {
+          if (!item) return false;
+          if (item.name) {
+            return (
+              item.name.toLowerCase().includes(query) ||
+              (item.parentName && item.parentName.toLowerCase().includes(query)) ||
+              (item.phone && item.phone.includes(query)) ||
+              (item.course && item.course.toLowerCase().includes(query)) ||
+              (item.address && item.address.toLowerCase().includes(query)) ||
+              (item.area && item.area.toLowerCase().includes(query)) ||
+              (item.city && item.city.toLowerCase().includes(query)) ||
+              (item.status && item.status.toLowerCase().includes(query)) ||
+              (item.dropReason && item.dropReason.toLowerCase().includes(query))
+            );
+          }
+          if (item.className || item.code) {
+            return (
+              (item.name && item.name.toLowerCase().includes(query)) ||
+              (item.code && item.code.toLowerCase().includes(query)) ||
+              (item.department && item.department.toLowerCase().includes(query))
+            );
+          }
+          return false;
+        })
+      : rawItems;
+
+    return (
+      <div className="drilldown-panel-container">
+        {/* Header */}
+        <div className="drilldown-panel-header">
+          <div className="drilldown-panel-title">
+            <LayoutDashboard size={18} color="#2563eb" />
+            <span>{activeDrillDown.title}</span>
+            <span
+              style={{
+                fontSize: '0.75rem',
+                background: '#2563eb',
+                color: '#ffffff',
+                padding: '2px 8px',
+                borderRadius: 12,
+                fontWeight: 700,
+              }}
+            >
+              {filtered.length} {filtered.length === 1 ? 'Record' : 'Records'}
+            </span>
+            {activeDrillDown.subtitle && (
+              <span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: 500 }}>
+                • {activeDrillDown.subtitle}
+              </span>
+            )}
+          </div>
+
+          <div className="drilldown-panel-tools">
+            <div style={{ position: 'relative' }}>
+              <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+              <input
+                type="text"
+                className="drilldown-search-input"
+                placeholder="Filter drill-down data..."
+                value={drillDownSearch}
+                onChange={(e) => setDrillDownSearch(e.target.value)}
+              />
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setActiveDrillDown(null)}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px' }}
+              title="Close drill-down panel"
+            >
+              <X size={15} />
+              <span>Close</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Content Body */}
+        <div className="drilldown-body">
+          {filtered.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '30px 10px', color: '#64748b', fontSize: '0.85rem' }}>
+              <AlertCircle size={24} color="#94a3b8" style={{ marginBottom: 6 }} />
+              <p style={{ margin: 0 }}>No records found matching "{drillDownSearch}" in this drill-down.</p>
+            </div>
+          ) : (
+            <table className="drilldown-table">
+              <thead>
+                <tr>
+                  <th>Student / Candidate</th>
+                  <th>Course & Class</th>
+                  <th>Residential Address (Module 1)</th>
+                  <th>Contact Info</th>
+                  <th>Status & Priority</th>
+                  <th>Staff Assignment</th>
+                  <th style={{ textAlign: 'center' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((lead) => (
+                  <tr key={lead.id}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div
+                          style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: '50%',
+                            background: '#eff6ff',
+                            color: '#2563eb',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 700,
+                            fontSize: '0.8rem',
+                            border: '1.5px solid #bfdbfe',
+                          }}
+                        >
+                          {lead.name ? lead.name.charAt(0) : 'S'}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 700, color: '#0f172a' }}>{lead.name}</div>
+                          <div style={{ fontSize: '0.72rem', color: '#64748b' }}>ID: {lead.id}</div>
+                        </div>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{ fontWeight: 600, color: '#1e293b' }}>{lead.course}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                        {lead.className || lead.groupName || 'General Cohort'}
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{ maxWidth: 240 }}>
+                        <div style={{ fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <MapPin size={12} color="#2563eb" />
+                          <span>{lead.address || 'Address provided'}</span>
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: 2 }}>
+                          {[lead.area || lead.locality, lead.city, lead.pinCode || lead.pincode]
+                            .filter(Boolean)
+                            .join(', ')}
+                        </div>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{ fontSize: '0.8rem', color: '#0f172a', fontWeight: 600 }}>
+                        {lead.parentPhone || lead.phone}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                        {lead.parentName ? `Parent: ${lead.parentName}` : lead.email}
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <span
+                          className={`status-badge status-${(lead.status || '').toLowerCase()}`}
+                          style={{ fontSize: '0.72rem', padding: '2px 8px' }}
+                        >
+                          <span className="status-dot"></span>
+                          {lead.status}
+                        </span>
+                        {lead.priority && (
+                          <span
+                            style={{
+                              fontSize: '0.68rem',
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                              fontWeight: 700,
+                              background: lead.priority === 'High' ? '#fee2e2' : '#fef3c7',
+                              color: lead.priority === 'High' ? '#b91c1c' : '#b45309',
+                            }}
+                          >
+                            {lead.priority}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{ fontSize: '0.775rem', fontWeight: 600, color: '#334155' }}>
+                        {lead.assignedTo || lead.ownerName || 'Unassigned'}
+                      </div>
+                      {lead.dropReason && (
+                        <div style={{ fontSize: '0.7rem', color: '#dc2626', fontWeight: 600, marginTop: 2 }}>
+                          Reason: {lead.dropReason}
+                        </div>
+                      )}
+                    </td>
+
+                    <td>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                        <a
+                          href={`tel:${lead.parentPhone || lead.phone}`}
+                          className="btn-icon"
+                          title="Call Parent / Candidate"
+                          style={{ color: '#16a34a', background: '#dcfce7', width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                        >
+                          <Phone size={13} />
+                        </a>
+                        <a
+                          href={`https://wa.me/${(lead.parentPhone || lead.phone || '').replace(/[^0-9]/g, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-icon"
+                          title="WhatsApp Chat"
+                          style={{ color: '#15803d', background: '#bbf7d0', width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                        >
+                          <MessageCircle size={13} />
+                        </a>
+                        <button
+                          className="btn-icon"
+                          title="Open Complete Student Profile"
+                          onClick={() => {
+                            setSelectedLeadForDrawer(lead);
+                            setIsDrawerOpen(true);
+                          }}
+                          style={{ color: '#2563eb', background: '#eff6ff', width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                        >
+                          <Eye size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Interactive Number Component (Hover Preview Popover + Mouse Click Drill-Down)
+  const InteractiveDrillNumber = ({
+    sectionId,
+    drillId,
+    title,
+    count,
+    items = [],
+    subtitle = '',
+    displayValue,
+    className = '',
+    style = {},
+    previewSnippet = '',
+  }) => {
+    const isHovered = hoveredNumber?.drillId === drillId;
+    const isActive = activeDrillDown?.drillId === drillId;
+
+    const previewNames = (items || [])
+      .slice(0, 3)
+      .map((i) => i.name || i.title || i.code)
+      .filter(Boolean);
+
+    const popoverSnippet =
+      previewSnippet ||
+      (items && items.length > 0
+        ? `Preview: ${previewNames.join(', ')}${items.length > 3 ? ` +${items.length - 3} more` : ''}`
+        : 'Click to view breakdown data');
+
+    return (
+      <span
+        className={`drilldown-number-wrapper ${className}`}
+        style={style}
+        onMouseEnter={() =>
+          setHoveredNumber({ drillId, title, count, subtitle, previewSnippet: popoverSnippet })
+        }
+        onMouseLeave={() => setHoveredNumber(null)}
+        onClick={(e) => {
+          e.stopPropagation();
+          handleTriggerDrillDown(sectionId, drillId, title, count, items, subtitle);
+        }}
+        title={`Click to drill down: ${title}`}
+      >
+        <span className={`drilldown-clickable-value ${isActive ? 'drilldown-active-value' : ''}`}>
+          {displayValue !== undefined ? displayValue : count}
+        </span>
+
+        {isHovered && (
+          <span className="drilldown-hover-popover" onClick={(e) => e.stopPropagation()}>
+            <span className="popover-header">
+              <span>{title}</span>
+              <span style={{ color: '#ffffff', fontWeight: 800 }}>
+                {displayValue !== undefined ? displayValue : count}
+              </span>
+            </span>
+            <span className="popover-body">{popoverSnippet}</span>
+            <span className="popover-footer-hint">
+              👆 Click number to open full drill-down data below
+            </span>
+          </span>
+        )}
+      </span>
+    );
   };
 
   // Academic Sub-Tab: 'courses' | 'classes' | 'groups'
@@ -3769,6 +4094,7 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                         {tenants.map((t) => {
                           const tCourses = courses.filter((c) => c.tenantId === t.id);
                           const tUsers = users.filter((u) => u.tenantId === t.id);
+                          const tLeads = leads.filter((l) => l.tenantId === t.id);
                           const isCurrent = t.id === activeTenantId;
                           return (
                             <div
@@ -3787,8 +4113,30 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                               <h4 style={{ margin: '0 0 4px', fontSize: '0.95rem', fontWeight: 800 }}>{t.name}</h4>
                               <div style={{ fontSize: '0.775rem', color: '#64748b', marginBottom: 8 }}>{t.tier} • {t.domain}</div>
                               <div style={{ fontSize: '0.775rem', color: '#334155', display: 'flex', gap: 12 }}>
-                                <span>Courses: <strong>{tCourses.length}</strong></span>
-                                <span>Users: <strong>{tUsers.length}</strong></span>
+                                <span>
+                                  Courses:{' '}
+                                  <InteractiveDrillNumber
+                                    sectionId="tenant"
+                                    drillId={`tenant-courses-${t.id}`}
+                                    title={`${t.name} - Enrolled Students`}
+                                    count={tCourses.length}
+                                    items={tLeads}
+                                    subtitle={`Tenant: ${t.name} (${tCourses.length} Courses)`}
+                                    previewSnippet={`Courses: ${tCourses.map(c => c.name).slice(0, 3).join(', ')}`}
+                                  />
+                                </span>
+                                <span>
+                                  Users:{' '}
+                                  <InteractiveDrillNumber
+                                    sectionId="tenant"
+                                    drillId={`tenant-users-${t.id}`}
+                                    title={`${t.name} - Team Members & Students`}
+                                    count={tUsers.length}
+                                    items={tLeads}
+                                    subtitle={`Tenant: ${t.name} (${tUsers.length} Users)`}
+                                    previewSnippet={`Users: ${tUsers.map(u => u.name).slice(0, 3).join(', ')}`}
+                                  />
+                                </span>
                                 <span>Admin: <strong>{t.contactEmail}</strong></span>
                               </div>
                             </div>
@@ -3798,6 +4146,7 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                     </div>
                   </div>
                 )}
+                {renderDrillDownPanel('tenant')}
 
                 {/* 2. EXECUTIVE & OPERATIONAL KPIS */}
                 {activeRoleCategories.includes('kpi_metrics') && (
@@ -3806,7 +4155,16 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                       <div className="metric-card">
                         <div className="metric-info">
                           <h4>{isSoleOwnerMode ? 'My Owned Leads' : 'Branch Total Leads'}</h4>
-                          <div className="metric-value">{dashboardMetrics.total}</div>
+                          <div className="metric-value">
+                            <InteractiveDrillNumber
+                              sectionId="kpi"
+                              drillId="kpi-total-leads"
+                              title={isSoleOwnerMode ? 'My Owned Leads' : 'Branch Total Leads'}
+                              count={dashboardMetrics.total}
+                              items={currentBranchLeads}
+                              subtitle={`${activeBranch?.name || 'Active Branch'}`}
+                            />
+                          </div>
                         </div>
                         <div className="metric-icon-wrap metric-blue">
                           <Users size={22} />
@@ -3816,7 +4174,16 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                       <div className="metric-card">
                         <div className="metric-info">
                           <h4>Active Inquiries</h4>
-                          <div className="metric-value">{dashboardMetrics.inquiry}</div>
+                          <div className="metric-value">
+                            <InteractiveDrillNumber
+                              sectionId="kpi"
+                              drillId="kpi-inquiries"
+                              title="Active Inquiries"
+                              count={dashboardMetrics.inquiry}
+                              items={currentBranchLeads.filter((l) => l.status === 'Inquiry')}
+                              subtitle="Stage 1 Pipeline"
+                            />
+                          </div>
                         </div>
                         <div className="metric-icon-wrap metric-purple">
                           <Bookmark size={22} />
@@ -3826,7 +4193,16 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                       <div className="metric-card">
                         <div className="metric-info">
                           <h4>Admitted & Enrolled</h4>
-                          <div className="metric-value">{dashboardMetrics.enrolled + dashboardMetrics.admitted}</div>
+                          <div className="metric-value">
+                            <InteractiveDrillNumber
+                              sectionId="kpi"
+                              drillId="kpi-enrolled-admitted"
+                              title="Admitted & Enrolled Students"
+                              count={dashboardMetrics.enrolled + dashboardMetrics.admitted}
+                              items={currentBranchLeads.filter((l) => l.status === 'Enrolled' || l.status === 'Admitted')}
+                              subtitle="Confirmed Admissions"
+                            />
+                          </div>
                         </div>
                         <div className="metric-icon-wrap metric-emerald">
                           <CheckCircle2 size={22} />
@@ -3836,7 +4212,17 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                       <div className="metric-card">
                         <div className="metric-info">
                           <h4>Conversion Rate</h4>
-                          <div className="metric-value">{dashboardMetrics.conversion}%</div>
+                          <div className="metric-value">
+                            <InteractiveDrillNumber
+                              sectionId="kpi"
+                              drillId="kpi-conversion"
+                              title="Converted Students (Admitted & Enrolled)"
+                              count={`${dashboardMetrics.conversion}%`}
+                              displayValue={`${dashboardMetrics.conversion}%`}
+                              items={currentBranchLeads.filter((l) => l.status === 'Enrolled' || l.status === 'Admitted')}
+                              subtitle={`${dashboardMetrics.enrolled + dashboardMetrics.admitted} of ${dashboardMetrics.total} converted`}
+                            />
+                          </div>
                         </div>
                         <div className="metric-icon-wrap metric-amber">
                           <TrendingUp size={22} />
@@ -3846,7 +4232,17 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                       <div className="metric-card">
                         <div className="metric-info">
                           <h4>Active Branch Classes</h4>
-                          <div className="metric-value">{activeBranchClasses.length}</div>
+                          <div className="metric-value">
+                            <InteractiveDrillNumber
+                              sectionId="kpi"
+                              drillId="kpi-classes"
+                              title="Active Branch Classes"
+                              count={activeBranchClasses.length}
+                              items={currentBranchLeads.filter((l) => l.status === 'Enrolled')}
+                              subtitle={`${activeBranchClasses.length} Classes in ${activeBranch?.name || 'Branch'}`}
+                              previewSnippet={`Classes: ${activeBranchClasses.map(c => c.name).slice(0, 3).join(', ')}${activeBranchClasses.length > 3 ? ` +${activeBranchClasses.length - 3} more` : ''}`}
+                            />
+                          </div>
                         </div>
                         <div className="metric-icon-wrap metric-blue">
                           <BookOpen size={22} />
@@ -3855,6 +4251,7 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                     </div>
                   </div>
                 )}
+                {renderDrillDownPanel('kpi')}
 
                 {/* 3. ADMISSIONS FUNNEL & PIPELINE VELOCITY */}
                 {activeRoleCategories.includes('admissions_pipeline') && (
@@ -3880,6 +4277,7 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                         ].map((stage) => {
                           const maxCount = Math.max(dashboardMetrics.total, 1);
                           const pct = Math.round((stage.count / maxCount) * 100);
+                          const stageLeads = currentBranchLeads.filter((l) => l.status === stage.key);
                           return (
                             <div key={stage.key} className="funnel-row">
                               <span className="funnel-stage-name">
@@ -3897,7 +4295,16 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                                   {stage.count > 0 && `${pct}%`}
                                 </div>
                               </div>
-                              <span className="funnel-count-badge">{stage.count}</span>
+                              <span className="funnel-count-badge">
+                                <InteractiveDrillNumber
+                                  sectionId="pipeline"
+                                  drillId={`pipeline-stage-${stage.key}`}
+                                  title={`Pipeline Stage: ${stage.label}`}
+                                  count={stage.count}
+                                  items={stageLeads}
+                                  subtitle={`${pct}% of branch leads`}
+                                />
+                              </span>
                             </div>
                           );
                         })}
@@ -3914,9 +4321,16 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                         <PhoneCall size={16} color="#ea580c" />
                         <span>Priority Follow-up Queue</span>
                       </div>
-                      <span className="badge-count" style={{ background: '#ffedd5', color: '#c2410c', fontSize: '0.72rem', padding: '2px 8px', borderRadius: 10, fontWeight: 700 }}>
-                        {priorityFollowupsList.length} Action Needed
-                      </span>
+                      <InteractiveDrillNumber
+                        sectionId="priority"
+                        drillId="priority-action-needed"
+                        title="Priority Follow-up Queue (Action Needed)"
+                        count={priorityFollowupsList.length}
+                        displayValue={`${priorityFollowupsList.length} Action Needed`}
+                        items={priorityFollowupsList}
+                        subtitle="High & Medium priority follow-ups"
+                        style={{ background: '#ffedd5', color: '#c2410c', fontSize: '0.72rem', padding: '2px 8px', borderRadius: 10, fontWeight: 700 }}
+                      />
                     </div>
                     <div className="dashboard-card-body" style={{ maxHeight: 330, overflowY: 'auto' }}>
                       {priorityFollowupsList.length === 0 ? (
@@ -3989,6 +4403,9 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                   </div>
                 )}
 
+                {renderDrillDownPanel('pipeline')}
+                {renderDrillDownPanel('priority')}
+
                 {/* 5. MULTI-BRANCH OPERATIONS & COMPARISON */}
                 {activeRoleCategories.includes('branch_performance') && (
                   <div className="dashboard-card dashboard-col-12">
@@ -4034,9 +4451,40 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                                 </div>
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#334155', background: '#ffffff', padding: '8px 10px', borderRadius: 6, border: '1px solid #e2e8f0' }}>
-                                <div>Total Leads: <strong>{bLeads.length}</strong></div>
-                                <div>Enrolled: <strong>{bEnrolled}</strong></div>
-                                <div>Rate: <strong>{bRate}%</strong></div>
+                                <div>
+                                  Total Leads:{' '}
+                                  <InteractiveDrillNumber
+                                    sectionId="branch"
+                                    drillId={`branch-leads-${b.id}`}
+                                    title={`${b.name} - Total Leads`}
+                                    count={bLeads.length}
+                                    items={bLeads}
+                                    subtitle={`Branch: ${b.city} (${b.code})`}
+                                  />
+                                </div>
+                                <div>
+                                  Enrolled:{' '}
+                                  <InteractiveDrillNumber
+                                    sectionId="branch"
+                                    drillId={`branch-enrolled-${b.id}`}
+                                    title={`${b.name} - Enrolled Students`}
+                                    count={bEnrolled}
+                                    items={bLeads.filter((l) => l.status === 'Enrolled' || l.status === 'Admitted')}
+                                    subtitle={`Branch: ${b.city} (${b.code})`}
+                                  />
+                                </div>
+                                <div>
+                                  Rate:{' '}
+                                  <InteractiveDrillNumber
+                                    sectionId="branch"
+                                    drillId={`branch-rate-${b.id}`}
+                                    title={`${b.name} - Conversion Rate (${bRate}%)`}
+                                    count={`${bRate}%`}
+                                    displayValue={`${bRate}%`}
+                                    items={bLeads.filter((l) => l.status === 'Enrolled' || l.status === 'Admitted')}
+                                    subtitle={`${bEnrolled} of ${bLeads.length} enrolled`}
+                                  />
+                                </div>
                               </div>
                               <div>
                                 {isActive ? (
@@ -4060,6 +4508,7 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                     </div>
                   </div>
                 )}
+                {renderDrillDownPanel('branch')}
 
                 {/* 6. GEOGRAPHIC / RESIDENTIAL ADDRESS BREAKDOWN (MODULE 1 ADDRESS DATA) */}
                 {activeRoleCategories.includes('geographic_distribution') && (
@@ -4079,13 +4528,26 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                           Top Residential Localities & Areas
                         </div>
                         <div className="geo-chips-wrap">
-                          {areaDistribution.slice(0, 6).map(([area, count]) => (
-                            <span key={area} className="geo-chip">
-                              <MapPin size={12} color="#e11d48" />
-                              <span>{area}</span>
-                              <span className="geo-chip-count">{count}</span>
-                            </span>
-                          ))}
+                          {areaDistribution.slice(0, 6).map(([area, count]) => {
+                            const areaLeads = currentBranchLeads.filter(
+                              (l) => (l.area || '').trim().toLowerCase() === area.trim().toLowerCase()
+                            );
+                            return (
+                              <span key={area} className="geo-chip" style={{ padding: '3px 8px' }}>
+                                <MapPin size={12} color="#e11d48" />
+                                <span style={{ marginRight: 4 }}>{area}</span>
+                                <InteractiveDrillNumber
+                                  sectionId="geo"
+                                  drillId={`geo-area-${area}`}
+                                  title={`Residential Locality: ${area}`}
+                                  count={count}
+                                  items={areaLeads}
+                                  subtitle={`Students residing in ${area}`}
+                                  className="geo-chip-count"
+                                />
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
 
@@ -4095,12 +4557,25 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                             Top Cities
                           </div>
                           <div className="geo-chips-wrap">
-                            {cityDistribution.slice(0, 3).map(([city, count]) => (
-                              <span key={city} className="geo-chip">
-                                <span>{city}</span>
-                                <span className="geo-chip-count">{count}</span>
-                              </span>
-                            ))}
+                            {cityDistribution.slice(0, 3).map(([city, count]) => {
+                              const cityLeads = currentBranchLeads.filter(
+                                (l) => (l.city || '').trim().toLowerCase() === city.trim().toLowerCase()
+                              );
+                              return (
+                                <span key={city} className="geo-chip" style={{ padding: '3px 8px' }}>
+                                  <span style={{ marginRight: 4 }}>{city}</span>
+                                  <InteractiveDrillNumber
+                                    sectionId="geo"
+                                    drillId={`geo-city-${city}`}
+                                    title={`City: ${city}`}
+                                    count={count}
+                                    items={cityLeads}
+                                    subtitle={`Students residing in ${city}`}
+                                    className="geo-chip-count"
+                                  />
+                                </span>
+                              );
+                            })}
                           </div>
                         </div>
 
@@ -4109,12 +4584,25 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                             PIN Codes
                           </div>
                           <div className="geo-chips-wrap">
-                            {pinDistribution.slice(0, 3).map(([pin, count]) => (
-                              <span key={pin} className="geo-chip">
-                                <span>{pin}</span>
-                                <span className="geo-chip-count">{count}</span>
-                              </span>
-                            ))}
+                            {pinDistribution.slice(0, 3).map(([pin, count]) => {
+                              const pinLeads = currentBranchLeads.filter(
+                                (l) => (l.pinCode || l.pincode || '').toString().trim() === pin.toString().trim()
+                              );
+                              return (
+                                <span key={pin} className="geo-chip" style={{ padding: '3px 8px' }}>
+                                  <span style={{ marginRight: 4 }}>{pin}</span>
+                                  <InteractiveDrillNumber
+                                    sectionId="geo"
+                                    drillId={`geo-pin-${pin}`}
+                                    title={`PIN Code: ${pin}`}
+                                    count={count}
+                                    items={pinLeads}
+                                    subtitle={`Students in PIN ${pin}`}
+                                    className="geo-chip-count"
+                                  />
+                                </span>
+                              );
+                            })}
                           </div>
                         </div>
                       </div>
@@ -4144,13 +4632,23 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                           {activeBranchClasses.slice(0, 4).map((cls) => {
                             const pct = Math.round((cls.enrolledCount / cls.capacity) * 100);
                             const fillCol = pct >= 90 ? '#ef4444' : pct >= 75 ? '#f59e0b' : '#10b981';
+                            const classStudents = currentBranchLeads.filter(
+                              (l) => l.classId === cls.id || l.className === cls.name || l.course === cls.courseId
+                            );
                             return (
                               <div key={cls.id} className="capacity-item">
                                 <div className="capacity-header">
                                   <span>{cls.name}</span>
-                                  <span style={{ color: fillCol, fontWeight: 700 }}>
-                                    {cls.enrolledCount} / {cls.capacity} ({pct}%)
-                                  </span>
+                                  <InteractiveDrillNumber
+                                    sectionId="academic"
+                                    drillId={`academic-class-${cls.id}`}
+                                    title={`Class: ${cls.name} (Enrolled Students)`}
+                                    count={cls.enrolledCount}
+                                    displayValue={`${cls.enrolledCount} / ${cls.capacity} (${pct}%)`}
+                                    items={classStudents}
+                                    subtitle={`Class capacity: ${cls.capacity} seats`}
+                                    style={{ color: fillCol, fontWeight: 700 }}
+                                  />
                                 </div>
                                 <div className="capacity-track">
                                   <div
@@ -4167,6 +4665,9 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                   </div>
                 )}
 
+                {renderDrillDownPanel('geo')}
+                {renderDrillDownPanel('academic')}
+
                 {/* 8. DROP REASONS & ATTRITION INTELLIGENCE */}
                 {activeRoleCategories.includes('drop_analytics') && (
                   <div className="dashboard-card dashboard-col-6">
@@ -4175,9 +4676,16 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                         <TrendingDown size={16} color="#ef4444" />
                         <span>Drop Reasons & Candidate Retention Intelligence</span>
                       </div>
-                      <span style={{ fontSize: '0.75rem', color: '#b91c1c', fontWeight: 700 }}>
-                        {dashboardMetrics.lost} Lost Leads
-                      </span>
+                      <InteractiveDrillNumber
+                        sectionId="drop"
+                        drillId="drop-total-lost"
+                        title="Total Lost / Dropped Leads"
+                        count={dashboardMetrics.lost}
+                        displayValue={`${dashboardMetrics.lost} Lost Leads`}
+                        items={currentBranchLeads.filter((l) => l.status === 'Lost')}
+                        subtitle="Discontinued candidates"
+                        style={{ fontSize: '0.75rem', color: '#b91c1c', fontWeight: 700 }}
+                      />
                     </div>
                     <div className="dashboard-card-body">
                       {dashboardMetrics.lost === 0 ? (
@@ -4191,11 +4699,22 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                             .filter(([, count]) => count > 0)
                             .map(([rName, count]) => {
                               const pct = Math.round((count / Math.max(dashboardMetrics.lost, 1)) * 100);
+                              const droppedWithReason = currentBranchLeads.filter(
+                                (l) => l.status === 'Lost' && (l.dropReason === rName || l.reason === rName)
+                              );
                               return (
                                 <div key={rName}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 600, color: '#334155', marginBottom: 3 }}>
                                     <span>{rName}</span>
-                                    <span>{count} ({pct}%)</span>
+                                    <InteractiveDrillNumber
+                                      sectionId="drop"
+                                      drillId={`drop-reason-${rName}`}
+                                      title={`Drop Reason: ${rName}`}
+                                      count={count}
+                                      displayValue={`${count} (${pct}%)`}
+                                      items={droppedWithReason}
+                                      subtitle={`${pct}% of dropped candidates`}
+                                    />
                                   </div>
                                   <div style={{ height: 8, background: '#f1f5f9', borderRadius: 4, overflow: 'hidden' }}>
                                     <div style={{ width: `${pct}%`, height: '100%', background: '#ef4444', borderRadius: 4 }}></div>
@@ -4247,6 +4766,8 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                   </div>
                 )}
 
+                {renderDrillDownPanel('drop')}
+
                 {/* 10. COUNSELOR & STAFF WORKLOAD */}
                 {activeRoleCategories.includes('staff_workload') && canManageUsers && (
                   <div className="dashboard-card dashboard-col-12">
@@ -4261,22 +4782,62 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                     </div>
                     <div className="dashboard-card-body">
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                        {staffDistribution.map(([staffName, s]) => (
-                          <div key={staffName} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 14px', background: '#f8fafc' }}>
-                            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>
-                              {staffName}
+                        {staffDistribution.map(([staffName, s]) => {
+                          const staffLeads = currentBranchLeads.filter(
+                            (l) => (l.assignedTo || l.ownerName) === staffName
+                          );
+                          const staffInq = staffLeads.filter((l) => l.status === 'Inquiry');
+                          const staffEnrolled = staffLeads.filter(
+                            (l) => l.status === 'Enrolled' || l.status === 'Admitted'
+                          );
+                          return (
+                            <div key={staffName} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 14px', background: '#f8fafc' }}>
+                              <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>
+                                {staffName}
+                              </div>
+                              <div style={{ fontSize: '0.775rem', color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
+                                <span>
+                                  Assigned:{' '}
+                                  <InteractiveDrillNumber
+                                    sectionId="staff"
+                                    drillId={`staff-assigned-${staffName}`}
+                                    title={`${staffName} - All Assigned Leads`}
+                                    count={s.total}
+                                    items={staffLeads}
+                                    subtitle="Complete counselor assignment"
+                                  />
+                                </span>
+                                <span>
+                                  Inquiries:{' '}
+                                  <InteractiveDrillNumber
+                                    sectionId="staff"
+                                    drillId={`staff-inq-${staffName}`}
+                                    title={`${staffName} - Active Inquiries`}
+                                    count={s.inq}
+                                    items={staffInq}
+                                    subtitle="Early stage inquiries"
+                                  />
+                                </span>
+                                <span>
+                                  Enrolled:{' '}
+                                  <InteractiveDrillNumber
+                                    sectionId="staff"
+                                    drillId={`staff-enrolled-${staffName}`}
+                                    title={`${staffName} - Enrolled Students`}
+                                    count={s.enrolled}
+                                    items={staffEnrolled}
+                                    subtitle="Successfully admitted"
+                                  />
+                                </span>
+                              </div>
                             </div>
-                            <div style={{ fontSize: '0.775rem', color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
-                              <span>Assigned: <strong>{s.total}</strong></span>
-                              <span>Inquiries: <strong>{s.inq}</strong></span>
-                              <span>Enrolled: <strong>{s.enrolled}</strong></span>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
                 )}
+                {renderDrillDownPanel('staff')}
               </div>
             )}
           </div>

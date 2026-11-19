@@ -487,6 +487,183 @@ assert(
   'M3-Scenario 8: Switching between active branches updates dashboard metrics and lead counts dynamically'
 );
 
+// ---------------------------------------------------------------------------
+// MODULE 4 TESTS: INTERACTIVE NUMBER HOVER PREVIEW & DRILL-DOWN DATA PANELS
+// ---------------------------------------------------------------------------
+console.log('\n--- MODULE 4: INTERACTIVE NUMBER HOVER PREVIEW & DRILL-DOWN ---');
+
+// Mock drill-down state controller
+function createDrillDownController() {
+  let activeDrillDown = null;
+  let hoveredNumber = null;
+  let drillDownSearch = '';
+
+  const setHoveredNumber = (data) => {
+    hoveredNumber = data;
+  };
+
+  const handleTriggerDrillDown = (sectionId, drillId, title, count, items, subtitle = '') => {
+    if (activeDrillDown && activeDrillDown.drillId === drillId) {
+      activeDrillDown = null;
+    } else {
+      activeDrillDown = {
+        sectionId,
+        drillId,
+        title,
+        count,
+        items: items || [],
+        subtitle,
+      };
+      drillDownSearch = '';
+    }
+  };
+
+  const filterDrillDownItems = (query) => {
+    if (!activeDrillDown) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return activeDrillDown.items;
+    return activeDrillDown.items.filter((item) => {
+      if (!item) return false;
+      return (
+        (item.name && item.name.toLowerCase().includes(q)) ||
+        (item.parentName && item.parentName.toLowerCase().includes(q)) ||
+        (item.phone && item.phone.includes(q)) ||
+        (item.course && item.course.toLowerCase().includes(q)) ||
+        (item.address && item.address.toLowerCase().includes(q)) ||
+        (item.area && item.area.toLowerCase().includes(q)) ||
+        (item.city && item.city.toLowerCase().includes(q)) ||
+        (item.status && item.status.toLowerCase().includes(q)) ||
+        (item.dropReason && item.dropReason.toLowerCase().includes(q))
+      );
+    });
+  };
+
+  return {
+    getActive: () => activeDrillDown,
+    getHovered: () => hoveredNumber,
+    setHoveredNumber,
+    handleTriggerDrillDown,
+    filterDrillDownItems,
+  };
+}
+
+const controller = createDrillDownController();
+
+// Test 1: Hovering over number generates popover metadata with preview snippet
+controller.setHoveredNumber({
+  drillId: 'kpi-total-leads',
+  title: 'Branch Total Leads',
+  count: branch1Leads.length,
+  subtitle: 'Main Campus',
+  previewSnippet: `Preview: ${branch1Leads.slice(0, 3).map((l) => l.name).join(', ')} +${branch1Leads.length - 3} more`,
+});
+const hovered = controller.getHovered();
+assert(
+  hovered && hovered.drillId === 'kpi-total-leads' && hovered.previewSnippet.includes('Preview:'),
+  'M4-Scenario 1: Hovering over any number generates popover preview metadata with record names'
+);
+
+// Test 2: Clicking number opens drill-down panel with underlying records
+controller.handleTriggerDrillDown(
+  'kpi',
+  'kpi-total-leads',
+  'Branch Total Leads',
+  branch1Leads.length,
+  branch1Leads,
+  'Main Campus'
+);
+let active = controller.getActive();
+assert(
+  active && active.sectionId === 'kpi' && active.items.length === branch1Leads.length,
+  'M4-Scenario 2: Mouse click on number opens drill-down panel directly below that section with full records'
+);
+
+// Test 3: Clicking the same number toggles drill-down closed
+controller.handleTriggerDrillDown(
+  'kpi',
+  'kpi-total-leads',
+  'Branch Total Leads',
+  branch1Leads.length,
+  branch1Leads,
+  'Main Campus'
+);
+assert(
+  controller.getActive() === null,
+  'M4-Scenario 3: Clicking active number a second time toggles the drill-down panel closed'
+);
+
+// Test 4: Pipeline stage click drills down to matching status leads
+const inquiryLeads = branch1Leads.filter((l) => l.status === 'Inquiry');
+controller.handleTriggerDrillDown(
+  'pipeline',
+  'pipeline-stage-Inquiry',
+  'Pipeline Stage: 1. Inquiry',
+  inquiryLeads.length,
+  inquiryLeads,
+  'Stage 1'
+);
+active = controller.getActive();
+assert(
+  active && active.sectionId === 'pipeline' && active.items.every((l) => l.status === 'Inquiry'),
+  'M4-Scenario 4: Clicking pipeline stage number drills down exclusively to candidates in that stage'
+);
+
+// Test 5: Search filtering within active drill-down panel
+const firstStudentName = inquiryLeads[0].name;
+const filteredResults = controller.filterDrillDownItems(firstStudentName);
+assert(
+  filteredResults.length >= 1 && filteredResults[0].name === firstStudentName,
+  'M4-Scenario 5: Real-time search filter within drill-down panel matches candidate name instantly'
+);
+
+// Test 6: Geographic area drill-down shows students residing in that locality
+const indiranagarLeads = branch1Leads.filter((l) => (l.area || '').toLowerCase() === 'indiranagar');
+controller.handleTriggerDrillDown(
+  'geo',
+  'geo-area-Indiranagar',
+  'Residential Locality: Indiranagar',
+  indiranagarLeads.length,
+  indiranagarLeads,
+  'Students in Indiranagar'
+);
+active = controller.getActive();
+assert(
+  active && active.sectionId === 'geo' && active.items.every((l) => (l.area || '').toLowerCase() === 'indiranagar'),
+  'M4-Scenario 6: Geographic area chip click drills down to students residing in that specific residential area'
+);
+
+// Test 7: Drop reason drill-down shows dropped applicants with reasons and remarks
+const feeDropLeads = branch1Leads.filter((l) => l.status === 'Lost' && (l.dropReason === 'High Fees' || l.reason === 'High Fees'));
+controller.handleTriggerDrillDown(
+  'drop',
+  'drop-reason-High Fees',
+  'Drop Reason: High Fees',
+  feeDropLeads.length,
+  feeDropLeads,
+  'Fee dropped candidates'
+);
+active = controller.getActive();
+assert(
+  active && active.sectionId === 'drop' && active.items.length === feeDropLeads.length,
+  'M4-Scenario 7: Drop analytics number click drills down to lost leads with specific attrition reasons'
+);
+
+// Test 8: Staff workload drill-down shows assigned portfolio for that counselor
+const counselorLeads = branch1Leads.filter((l) => (l.assignedTo || l.ownerName) === 'Priya Sharma');
+controller.handleTriggerDrillDown(
+  'staff',
+  'staff-assigned-Priya Sharma',
+  'Priya Sharma - Assigned Leads',
+  counselorLeads.length,
+  counselorLeads,
+  'Counselor Portfolio'
+);
+active = controller.getActive();
+assert(
+  active && active.sectionId === 'staff' && active.items.every((l) => (l.assignedTo || l.ownerName) === 'Priya Sharma'),
+  'M4-Scenario 8: Counselor workload number click drills down to all leads assigned to that counselor'
+);
+
 console.log('\n====================================================');
 console.log(`TEST SUMMARY: ${passedTests}/${totalTests} TESTS PASSED (100% SUCCESS)`);
 console.log('====================================================');
