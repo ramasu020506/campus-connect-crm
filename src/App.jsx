@@ -59,7 +59,12 @@ import {
   DollarSign,
   TrendingDown,
   UserMinus,
-  CheckCircle
+  CheckCircle,
+  LayoutDashboard,
+  BarChart3,
+  TrendingUp,
+  PhoneCall,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   INITIAL_TENANTS,
@@ -77,6 +82,9 @@ import {
   INITIAL_BRANCH_ACTIVITIES,
   STATUS_LIST,
   ATTEND_STATUS_LIST,
+  DASHBOARD_CATEGORIES_METADATA,
+  DEFAULT_ROLE_DASHBOARD_CONFIGS,
+  isCategoryPermittedForRole,
   generateTenantId,
   generateUserId,
   generateCourseId,
@@ -244,6 +252,27 @@ export default function App() {
       };
     }
   });
+
+  // Role Dashboard Category Configurations (Customizable per role in Settings)
+  const [roleDashboardConfigs, setRoleDashboardConfigs] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cc_saas_role_dashboard_configs_v6');
+      return saved ? JSON.parse(saved) : DEFAULT_ROLE_DASHBOARD_CONFIGS;
+    } catch {
+      return DEFAULT_ROLE_DASHBOARD_CONFIGS;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('cc_saas_role_dashboard_configs_v6', JSON.stringify(roleDashboardConfigs));
+  }, [roleDashboardConfigs]);
+
+  // Dashboard Settings & Customization Modal State
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [settingsActiveTab, setSettingsActiveTab] = useState('dashboard_roles'); // 'dashboard_roles' | 'address_fields' | 'drop_reasons'
+  const [selectedRoleForSettings, setSelectedRoleForSettings] = useState('admissions_counselor');
+  const [customizeDashboardModalOpen, setCustomizeDashboardModalOpen] = useState(false);
+  const [settingsSuccessMessage, setSettingsSuccessMessage] = useState(null);
 
   // Mobile App Mode State (PRV Staff Mobile View)
   const [isMobileViewMode, setIsMobileViewMode] = useState(() => {
@@ -567,8 +596,68 @@ export default function App() {
   // ----------------------------------------------------
   // 5. Navigation Tabs
   // ----------------------------------------------------
-  // 'leads' | 'academic' | 'organizations' | 'users' | 'tenants'
-  const [activeTab, setActiveTab] = useState('leads');
+  // 'dashboard' | 'leads' | 'academic' | 'organizations' | 'users' | 'tenants' | 'settings'
+  const [activeTab, setActiveTab] = useState('dashboard');
+
+  // Active Categories for Current User's Role (guarded by permission checks)
+  const activeRoleCategories = useMemo(() => {
+    const roleKey = currentUser?.role || 'admissions_counselor';
+    const roleConfig =
+      roleDashboardConfigs[roleKey] ||
+      DEFAULT_ROLE_DASHBOARD_CONFIGS[roleKey] ||
+      DEFAULT_ROLE_DASHBOARD_CONFIGS.admissions_counselor;
+    const enabled = roleConfig.enabledCategories || [];
+    return enabled.filter((catId) => isCategoryPermittedForRole(catId, roleKey, ROLE_DEFINITIONS));
+  }, [roleDashboardConfigs, currentUser]);
+
+  const handleToggleCategoryForRole = (roleKey, categoryId) => {
+    const isPermitted = isCategoryPermittedForRole(categoryId, roleKey, ROLE_DEFINITIONS);
+    if (!isPermitted) {
+      alert(`Role "${ROLE_DEFINITIONS[roleKey]?.label}" does not have the required permissions for this category.`);
+      return;
+    }
+
+    setRoleDashboardConfigs((prev) => {
+      const roleConf = prev[roleKey] || DEFAULT_ROLE_DASHBOARD_CONFIGS[roleKey] || { enabledCategories: [] };
+      const currentEnabled = roleConf.enabledCategories || [];
+      const isEnabled = currentEnabled.includes(categoryId);
+
+      let nextEnabled;
+      if (isEnabled) {
+        if (currentEnabled.length <= 1) {
+          alert("A dashboard must have at least one active category.");
+          return prev;
+        }
+        nextEnabled = currentEnabled.filter((id) => id !== categoryId);
+      } else {
+        nextEnabled = [...currentEnabled, categoryId];
+      }
+
+      return {
+        ...prev,
+        [roleKey]: {
+          ...roleConf,
+          roleKey,
+          enabledCategories: nextEnabled,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    });
+
+    setSettingsSuccessMessage(`Dashboard categories updated for ${ROLE_DEFINITIONS[roleKey]?.label}`);
+    setTimeout(() => setSettingsSuccessMessage(null), 3000);
+  };
+
+  const handleResetRoleDashboard = (roleKey) => {
+    const defaults = DEFAULT_ROLE_DASHBOARD_CONFIGS[roleKey];
+    if (!defaults) return;
+    setRoleDashboardConfigs((prev) => ({
+      ...prev,
+      [roleKey]: { ...defaults },
+    }));
+    setSettingsSuccessMessage(`Reset ${ROLE_DEFINITIONS[roleKey]?.label} dashboard to recommended defaults.`);
+    setTimeout(() => setSettingsSuccessMessage(null), 3000);
+  };
 
   // Academic Sub-Tab: 'courses' | 'classes' | 'groups'
   const [academicSubTab, setAcademicSubTab] = useState('courses');
@@ -668,6 +757,71 @@ export default function App() {
     });
     return stats;
   }, [dropReasons, droppedLeads]);
+
+  // Dashboard Aggregations for Active Branch & Role View
+  const currentBranchLeads = useMemo(() => {
+    if (isSoleOwnerMode) {
+      return leads.filter((l) => (l.ownerId === currentUser.id || l.assignedTo === currentUser.name) && l.tenantId === activeTenantId);
+    }
+    return leads.filter((l) => l.branchId === activeBranchId && l.tenantId === activeTenantId);
+  }, [leads, activeBranchId, activeTenantId, isSoleOwnerMode, currentUser]);
+
+  const dashboardMetrics = useMemo(() => {
+    const total = currentBranchLeads.length;
+    const inquiry = currentBranchLeads.filter((l) => l.status === 'Inquiry').length;
+    const contacted = currentBranchLeads.filter((l) => l.status === 'Contacted').length;
+    const applied = currentBranchLeads.filter((l) => l.status === 'Applied').length;
+    const admitted = currentBranchLeads.filter((l) => l.status === 'Admitted').length;
+    const enrolled = currentBranchLeads.filter((l) => l.status === 'Enrolled').length;
+    const lost = currentBranchLeads.filter((l) => l.status === 'Lost').length;
+    const conversion = total > 0 ? Math.round(((enrolled + admitted) / total) * 100) : 0;
+    return { total, inquiry, contacted, applied, admitted, enrolled, lost, conversion };
+  }, [currentBranchLeads]);
+
+  const priorityFollowupsList = useMemo(() => {
+    return currentBranchLeads
+      .filter((l) => (l.priority === 'High' || l.priority === 'Medium') && l.status !== 'Enrolled' && l.status !== 'Lost')
+      .slice(0, 6);
+  }, [currentBranchLeads]);
+
+  const areaDistribution = useMemo(() => {
+    const counts = {};
+    currentBranchLeads.forEach((l) => {
+      const a = (l.area || l.locality || 'General Area').trim();
+      counts[a] = (counts[a] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [currentBranchLeads]);
+
+  const cityDistribution = useMemo(() => {
+    const counts = {};
+    currentBranchLeads.forEach((l) => {
+      const c = (l.city || 'Bangalore').trim();
+      counts[c] = (counts[c] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [currentBranchLeads]);
+
+  const pinDistribution = useMemo(() => {
+    const counts = {};
+    currentBranchLeads.forEach((l) => {
+      const p = (l.pinCode || l.pincode || '').trim();
+      if (p) counts[p] = (counts[p] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [currentBranchLeads]);
+
+  const staffDistribution = useMemo(() => {
+    const map = {};
+    currentBranchLeads.forEach((l) => {
+      const s = l.assignedTo || l.ownerName || 'Unassigned';
+      if (!map[s]) map[s] = { total: 0, enrolled: 0, inq: 0 };
+      map[s].total += 1;
+      if (l.status === 'Enrolled' || l.status === 'Admitted') map[s].enrolled += 1;
+      else if (l.status === 'Inquiry') map[s].inq += 1;
+    });
+    return Object.entries(map).sort((a, b) => b[1].total - a[1].total);
+  }, [currentBranchLeads]);
 
   // Multi-Factor Duplicate Lead Detection Engine
   const checkDuplicateLead = (leadInput, existingList = leads, currentLeadId = null) => {
@@ -3373,6 +3527,18 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
               <Download size={14} />
               <span>Get App</span>
             </button>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setSelectedRoleForSettings(currentUser.role);
+                setIsSettingsModalOpen(true);
+              }}
+              title="Configure Role-Based Dashboards & CRM Settings"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px', borderRadius: 6, cursor: 'pointer' }}
+            >
+              <Settings size={14} />
+              <span>Settings</span>
+            </button>
           </div>
         </div>
       </header>
@@ -3380,6 +3546,18 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
       {/* 3. Navigation Tabs */}
       <nav className="app-nav-tabs">
         <div className="tabs-inner">
+          {/* TAB 0: ROLE-BASED DASHBOARD (CUSTOMIZABLE PER ROLE) */}
+          <button
+            className={`nav-tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setActiveTab('dashboard')}
+          >
+            <LayoutDashboard size={16} />
+            <span>Dashboard</span>
+            <span className="tab-count-pill" style={{ background: '#e0e7ff', color: '#4338ca', fontWeight: 700 }}>
+              {currentUserRole.label}
+            </span>
+          </button>
+
           <button
             className={`nav-tab-btn ${activeTab === 'leads' ? 'active' : ''}`}
             onClick={() => setActiveTab('leads')}
@@ -3422,6 +3600,18 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
             <School size={16} />
             <span>Tenants Directory</span>
           </button>
+
+          {/* TAB 6: SETTINGS & ROLE DASHBOARD VIEWS */}
+          <button
+            className={`nav-tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => {
+              setSelectedRoleForSettings(currentUser.role);
+              setActiveTab('settings');
+            }}
+          >
+            <Settings size={16} />
+            <span>Settings & Role Views</span>
+          </button>
         </div>
       </nav>
 
@@ -3455,6 +3645,643 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
 
       {/* 5. Main Content Area */}
       <main className="main-content">
+        {/* ======================================================== */}
+        {/* TAB 0: ROLE-BASED CUSTOMIZABLE DASHBOARD */}
+        {/* ======================================================== */}
+        {activeTab === 'dashboard' && (
+          <div className="dashboard-container">
+            {/* Top Toolbar */}
+            <div className="dashboard-toolbar-card">
+              <div className="dashboard-user-greeting">
+                <div
+                  style={{
+                    width: 46,
+                    height: 46,
+                    borderRadius: '50%',
+                    background: currentUserRole.bg,
+                    color: currentUserRole.color,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 800,
+                    fontSize: '1.15rem',
+                    border: `2px solid ${currentUserRole.color}`,
+                    boxShadow: '0 2px 5px rgba(0,0,0,0.06)',
+                  }}
+                >
+                  {currentUser.name.charAt(0)}
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#0f172a' }}>
+                      {currentUser.name}'s Dashboard
+                    </h2>
+                    <span
+                      className="dashboard-role-badge"
+                      style={{ background: currentUserRole.bg, color: currentUserRole.color, border: `1px solid ${currentUserRole.color}30` }}
+                    >
+                      <Shield size={12} /> {currentUserRole.label}
+                    </span>
+                  </div>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.825rem', color: '#64748b' }}>
+                    Active Context: <strong>{activeBranch?.name}</strong> ({activeOrg?.name}) • Home Branch:{' '}
+                    <strong>{userPrimaryBranch?.name}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="dashboard-toolbar-actions">
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setCustomizeDashboardModalOpen(true)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                  title="Customize category cards visible on this dashboard"
+                >
+                  <SlidersHorizontal size={14} color="#2563eb" />
+                  <span>Customize Dashboard ({activeRoleCategories.length} Active)</span>
+                </button>
+
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setSelectedRoleForSettings(currentUser.role);
+                    setIsSettingsModalOpen(true);
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                  title="Open Dashboard & Role Permissions Settings"
+                >
+                  <Settings size={14} />
+                  <span>Role View Settings</span>
+                </button>
+
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleResetRoleDashboard(currentUser.role)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                  title="Reset to role's recommended default categories"
+                >
+                  <RefreshCw size={13} />
+                  <span>Reset Defaults</span>
+                </button>
+              </div>
+            </div>
+
+            {settingsSuccessMessage && (
+              <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#065f46', padding: '10px 16px', borderRadius: 8, fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <CheckCircle size={16} color="#059669" />
+                <span>{settingsSuccessMessage}</span>
+              </div>
+            )}
+
+            {/* Modular Category Cards */}
+            {activeRoleCategories.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px 20px', background: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                <LayoutDashboard size={40} color="#cbd5e1" style={{ marginBottom: 12 }} />
+                <h3 style={{ margin: '0 0 8px', color: '#1e293b' }}>No Dashboard Categories Active</h3>
+                <p style={{ margin: '0 0 16px', color: '#64748b', fontSize: '0.85rem' }}>
+                  All dashboard categories for this role are currently hidden. Customize your dashboard view to add categories.
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
+                  <button className="btn btn-primary btn-sm" onClick={() => setCustomizeDashboardModalOpen(true)}>
+                    <SlidersHorizontal size={14} /> Customize Dashboard
+                  </button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => handleResetRoleDashboard(currentUser.role)}>
+                    <RefreshCw size={14} /> Restore Defaults
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="dashboard-grid">
+                {/* 1. SUPER ADMIN MULTI-TENANT ECOSYSTEM OVERVIEW */}
+                {activeRoleCategories.includes('tenant_overview') && canManageTenants && (
+                  <div className="dashboard-card dashboard-col-12">
+                    <div className="dashboard-card-header">
+                      <div className="dashboard-card-title">
+                        <School size={16} color="#7c3aed" />
+                        <span>Consortium Multi-Tenant Global Ecosystem</span>
+                      </div>
+                      <span className="badge-super-admin" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
+                        Super Admin Exclusive
+                      </span>
+                    </div>
+                    <div className="dashboard-card-body">
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+                        {tenants.map((t) => {
+                          const tCourses = courses.filter((c) => c.tenantId === t.id);
+                          const tUsers = users.filter((u) => u.tenantId === t.id);
+                          const isCurrent = t.id === activeTenantId;
+                          return (
+                            <div
+                              key={t.id}
+                              style={{
+                                padding: 14,
+                                borderRadius: 8,
+                                border: isCurrent ? '2px solid #7c3aed' : '1px solid #e2e8f0',
+                                background: isCurrent ? '#faf5ff' : '#ffffff',
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#7c3aed' }}>{t.id}</span>
+                                {isCurrent && <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#16a34a', background: '#dcfce7', padding: '1px 6px', borderRadius: 4 }}>Active Session</span>}
+                              </div>
+                              <h4 style={{ margin: '0 0 4px', fontSize: '0.95rem', fontWeight: 800 }}>{t.name}</h4>
+                              <div style={{ fontSize: '0.775rem', color: '#64748b', marginBottom: 8 }}>{t.tier} • {t.domain}</div>
+                              <div style={{ fontSize: '0.775rem', color: '#334155', display: 'flex', gap: 12 }}>
+                                <span>Courses: <strong>{tCourses.length}</strong></span>
+                                <span>Users: <strong>{tUsers.length}</strong></span>
+                                <span>Admin: <strong>{t.contactEmail}</strong></span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. EXECUTIVE & OPERATIONAL KPIS */}
+                {activeRoleCategories.includes('kpi_metrics') && (
+                  <div className="dashboard-card dashboard-col-12" style={{ border: 'none', background: 'transparent', boxShadow: 'none' }}>
+                    <div className="metrics-grid" style={{ margin: 0 }}>
+                      <div className="metric-card">
+                        <div className="metric-info">
+                          <h4>{isSoleOwnerMode ? 'My Owned Leads' : 'Branch Total Leads'}</h4>
+                          <div className="metric-value">{dashboardMetrics.total}</div>
+                        </div>
+                        <div className="metric-icon-wrap metric-blue">
+                          <Users size={22} />
+                        </div>
+                      </div>
+
+                      <div className="metric-card">
+                        <div className="metric-info">
+                          <h4>Active Inquiries</h4>
+                          <div className="metric-value">{dashboardMetrics.inquiry}</div>
+                        </div>
+                        <div className="metric-icon-wrap metric-purple">
+                          <Bookmark size={22} />
+                        </div>
+                      </div>
+
+                      <div className="metric-card">
+                        <div className="metric-info">
+                          <h4>Admitted & Enrolled</h4>
+                          <div className="metric-value">{dashboardMetrics.enrolled + dashboardMetrics.admitted}</div>
+                        </div>
+                        <div className="metric-icon-wrap metric-emerald">
+                          <CheckCircle2 size={22} />
+                        </div>
+                      </div>
+
+                      <div className="metric-card">
+                        <div className="metric-info">
+                          <h4>Conversion Rate</h4>
+                          <div className="metric-value">{dashboardMetrics.conversion}%</div>
+                        </div>
+                        <div className="metric-icon-wrap metric-amber">
+                          <TrendingUp size={22} />
+                        </div>
+                      </div>
+
+                      <div className="metric-card">
+                        <div className="metric-info">
+                          <h4>Active Branch Classes</h4>
+                          <div className="metric-value">{activeBranchClasses.length}</div>
+                        </div>
+                        <div className="metric-icon-wrap metric-blue">
+                          <BookOpen size={22} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. ADMISSIONS FUNNEL & PIPELINE VELOCITY */}
+                {activeRoleCategories.includes('admissions_pipeline') && (
+                  <div className={`dashboard-card ${activeRoleCategories.includes('priority_followups') ? 'dashboard-col-7' : 'dashboard-col-12'}`}>
+                    <div className="dashboard-card-header">
+                      <div className="dashboard-card-title">
+                        <TrendingUp size={16} color="#2563eb" />
+                        <span>Admissions Pipeline & Stage Velocity</span>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>
+                        {activeBranch?.name}
+                      </span>
+                    </div>
+                    <div className="dashboard-card-body">
+                      <div className="funnel-container">
+                        {[
+                          { key: 'Inquiry', label: '1. Inquiry', count: dashboardMetrics.inquiry, color: '#3b82f6' },
+                          { key: 'Contacted', label: '2. Contacted', count: dashboardMetrics.contacted, color: '#6366f1' },
+                          { key: 'Applied', label: '3. Applied', count: dashboardMetrics.applied, color: '#d97706' },
+                          { key: 'Admitted', label: '4. Admitted', count: dashboardMetrics.admitted, color: '#059669' },
+                          { key: 'Enrolled', label: '5. Enrolled', count: dashboardMetrics.enrolled, color: '#16a34a' },
+                          { key: 'Lost', label: '6. Dropped / Lost', count: dashboardMetrics.lost, color: '#ef4444' },
+                        ].map((stage) => {
+                          const maxCount = Math.max(dashboardMetrics.total, 1);
+                          const pct = Math.round((stage.count / maxCount) * 100);
+                          return (
+                            <div key={stage.key} className="funnel-row">
+                              <span className="funnel-stage-name">
+                                <span style={{ width: 8, height: 8, borderRadius: '50%', background: stage.color }}></span>
+                                {stage.label}
+                              </span>
+                              <div className="funnel-bar-track">
+                                <div
+                                  className="funnel-bar-fill"
+                                  style={{
+                                    width: `${Math.max(pct, stage.count > 0 ? 8 : 0)}%`,
+                                    background: stage.color,
+                                  }}
+                                >
+                                  {stage.count > 0 && `${pct}%`}
+                                </div>
+                              </div>
+                              <span className="funnel-count-badge">{stage.count}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. PRIORITY FOLLOW-UP QUEUE */}
+                {activeRoleCategories.includes('priority_followups') && (
+                  <div className={`dashboard-card ${activeRoleCategories.includes('admissions_pipeline') ? 'dashboard-col-5' : 'dashboard-col-12'}`}>
+                    <div className="dashboard-card-header">
+                      <div className="dashboard-card-title">
+                        <PhoneCall size={16} color="#ea580c" />
+                        <span>Priority Follow-up Queue</span>
+                      </div>
+                      <span className="badge-count" style={{ background: '#ffedd5', color: '#c2410c', fontSize: '0.72rem', padding: '2px 8px', borderRadius: 10, fontWeight: 700 }}>
+                        {priorityFollowupsList.length} Action Needed
+                      </span>
+                    </div>
+                    <div className="dashboard-card-body" style={{ maxHeight: 330, overflowY: 'auto' }}>
+                      {priorityFollowupsList.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '30px 10px', color: '#64748b', fontSize: '0.85rem' }}>
+                          <CheckCircle2 size={28} color="#10b981" style={{ marginBottom: 6 }} />
+                          <p style={{ margin: 0 }}>All high priority leads up to date!</p>
+                        </div>
+                      ) : (
+                        <div className="priority-queue-list">
+                          {priorityFollowupsList.map((lead) => (
+                            <div key={lead.id} className="priority-queue-item">
+                              <div className="priority-queue-info">
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span className="priority-lead-name">{lead.name}</span>
+                                  <span
+                                    style={{
+                                      fontSize: '0.68rem',
+                                      padding: '1px 6px',
+                                      borderRadius: 4,
+                                      fontWeight: 700,
+                                      background: lead.priority === 'High' ? '#fee2e2' : '#fef3c7',
+                                      color: lead.priority === 'High' ? '#b91c1c' : '#b45309',
+                                    }}
+                                  >
+                                    {lead.priority}
+                                  </span>
+                                </div>
+                                <div className="priority-lead-sub">
+                                  <span>{lead.course}</span>
+                                  {lead.area && <span>• 📍 {lead.area}</span>}
+                                  <span>• 📞 {lead.parentPhone || lead.phone}</span>
+                                </div>
+                              </div>
+                              <div className="priority-lead-actions">
+                                <a
+                                  href={`tel:${lead.parentPhone || lead.phone}`}
+                                  className="btn-icon"
+                                  title="Direct Phone Call"
+                                  style={{ color: '#16a34a', background: '#dcfce7', width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  <Phone size={13} />
+                                </a>
+                                <a
+                                  href={`https://wa.me/${(lead.parentPhone || lead.phone || '').replace(/[^0-9]/g, '')}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn-icon"
+                                  title="Send WhatsApp Message"
+                                  style={{ color: '#15803d', background: '#bbf7d0', width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  <MessageCircle size={13} />
+                                </a>
+                                <button
+                                  className="btn-icon"
+                                  title="Open Student Profile & Address"
+                                  onClick={() => {
+                                    setSelectedLeadForDrawer(lead);
+                                    setIsDrawerOpen(true);
+                                  }}
+                                  style={{ color: '#2563eb', background: '#eff6ff', width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  <Eye size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 5. MULTI-BRANCH OPERATIONS & COMPARISON */}
+                {activeRoleCategories.includes('branch_performance') && (
+                  <div className="dashboard-card dashboard-col-12">
+                    <div className="dashboard-card-header">
+                      <div className="dashboard-card-title">
+                        <Building2 size={16} color="#0891b2" />
+                        <span>Multi-Branch Operations & Performance (Assigned Workplaces)</span>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                        Seamless Branch Switching Active
+                      </span>
+                    </div>
+                    <div className="dashboard-card-body">
+                      <div className="branch-compare-grid">
+                        {userAssignedBranches.map((b) => {
+                          const isActive = b.id === activeBranchId;
+                          const isPrimary = b.id === currentUser?.primaryBranchId;
+                          const bLeads = leads.filter((l) => l.branchId === b.id && l.tenantId === activeTenantId);
+                          const bEnrolled = bLeads.filter((l) => l.status === 'Enrolled' || l.status === 'Admitted').length;
+                          const bRate = bLeads.length > 0 ? Math.round((bEnrolled / bLeads.length) * 100) : 0;
+                          return (
+                            <div key={b.id} className={`branch-compare-card ${isActive ? 'active-branch' : ''}`}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                <div>
+                                  <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>
+                                    {b.name}
+                                  </h4>
+                                  <div style={{ fontSize: '0.775rem', color: '#64748b', marginTop: 2 }}>
+                                    📍 {b.city} ({b.code})
+                                  </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                  {isPrimary && (
+                                    <span style={{ fontSize: '0.68rem', fontWeight: 700, background: '#fef3c7', color: '#b45309', padding: '2px 6px', borderRadius: 4 }}>
+                                      ★ Default Home
+                                    </span>
+                                  )}
+                                  {isActive && (
+                                    <span style={{ fontSize: '0.68rem', fontWeight: 700, background: '#dbeafe', color: '#1e40af', padding: '2px 6px', borderRadius: 4 }}>
+                                      ✓ Active
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#334155', background: '#ffffff', padding: '8px 10px', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                                <div>Total Leads: <strong>{bLeads.length}</strong></div>
+                                <div>Enrolled: <strong>{bEnrolled}</strong></div>
+                                <div>Rate: <strong>{bRate}%</strong></div>
+                              </div>
+                              <div>
+                                {isActive ? (
+                                  <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 700 }}>
+                                    ✓ Currently Active Branch Context
+                                  </span>
+                                ) : (
+                                  <button
+                                    className="btn btn-primary btn-sm"
+                                    onClick={() => handleSelectBranch(b.id)}
+                                    style={{ width: '100%', fontSize: '0.775rem' }}
+                                  >
+                                    Switch to {b.name}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 6. GEOGRAPHIC / RESIDENTIAL ADDRESS BREAKDOWN (MODULE 1 ADDRESS DATA) */}
+                {activeRoleCategories.includes('geographic_distribution') && (
+                  <div className="dashboard-card dashboard-col-6">
+                    <div className="dashboard-card-header">
+                      <div className="dashboard-card-title">
+                        <MapPin size={16} color="#e11d48" />
+                        <span>Student Residential Address & Geographic Breakdown</span>
+                      </div>
+                      <span style={{ fontSize: '0.72rem', background: '#ffe4e6', color: '#be123c', padding: '2px 8px', borderRadius: 10, fontWeight: 700 }}>
+                        Module 1 Address
+                      </span>
+                    </div>
+                    <div className="dashboard-card-body">
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: '0.775rem', fontWeight: 700, color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+                          Top Residential Localities & Areas
+                        </div>
+                        <div className="geo-chips-wrap">
+                          {areaDistribution.slice(0, 6).map(([area, count]) => (
+                            <span key={area} className="geo-chip">
+                              <MapPin size={12} color="#e11d48" />
+                              <span>{area}</span>
+                              <span className="geo-chip-count">{count}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 14, paddingTop: 14, borderTop: '1px solid #f1f5f9' }}>
+                        <div>
+                          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+                            Top Cities
+                          </div>
+                          <div className="geo-chips-wrap">
+                            {cityDistribution.slice(0, 3).map(([city, count]) => (
+                              <span key={city} className="geo-chip">
+                                <span>{city}</span>
+                                <span className="geo-chip-count">{count}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+                            PIN Codes
+                          </div>
+                          <div className="geo-chips-wrap">
+                            {pinDistribution.slice(0, 3).map(([pin, count]) => (
+                              <span key={pin} className="geo-chip">
+                                <span>{pin}</span>
+                                <span className="geo-chip-count">{count}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 7. ACADEMIC STRUCTURE & CLASSROOM CAPACITY */}
+                {activeRoleCategories.includes('academic_capacity') && (
+                  <div className="dashboard-card dashboard-col-6">
+                    <div className="dashboard-card-header">
+                      <div className="dashboard-card-title">
+                        <BookOpen size={16} color="#d97706" />
+                        <span>Academic Batches & Classroom Capacity</span>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                        {activeBranchClasses.length} Branch Classes
+                      </span>
+                    </div>
+                    <div className="dashboard-card-body">
+                      {activeBranchClasses.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '30px 10px', color: '#64748b', fontSize: '0.85rem' }}>
+                          No classes defined for this branch yet.
+                        </div>
+                      ) : (
+                        <div className="capacity-list">
+                          {activeBranchClasses.slice(0, 4).map((cls) => {
+                            const pct = Math.round((cls.enrolledCount / cls.capacity) * 100);
+                            const fillCol = pct >= 90 ? '#ef4444' : pct >= 75 ? '#f59e0b' : '#10b981';
+                            return (
+                              <div key={cls.id} className="capacity-item">
+                                <div className="capacity-header">
+                                  <span>{cls.name}</span>
+                                  <span style={{ color: fillCol, fontWeight: 700 }}>
+                                    {cls.enrolledCount} / {cls.capacity} ({pct}%)
+                                  </span>
+                                </div>
+                                <div className="capacity-track">
+                                  <div
+                                    className="capacity-fill"
+                                    style={{ width: `${Math.min(pct, 100)}%`, background: fillCol }}
+                                  ></div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 8. DROP REASONS & ATTRITION INTELLIGENCE */}
+                {activeRoleCategories.includes('drop_analytics') && (
+                  <div className="dashboard-card dashboard-col-6">
+                    <div className="dashboard-card-header">
+                      <div className="dashboard-card-title">
+                        <TrendingDown size={16} color="#ef4444" />
+                        <span>Drop Reasons & Candidate Retention Intelligence</span>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: '#b91c1c', fontWeight: 700 }}>
+                        {dashboardMetrics.lost} Lost Leads
+                      </span>
+                    </div>
+                    <div className="dashboard-card-body">
+                      {dashboardMetrics.lost === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '24px 10px', color: '#16a34a', fontSize: '0.85rem' }}>
+                          <CheckCircle2 size={24} color="#16a34a" style={{ marginBottom: 4 }} />
+                          <p style={{ margin: 0 }}>Zero candidate drops in this branch!</p>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          {Object.entries(dropReasonsStats)
+                            .filter(([, count]) => count > 0)
+                            .map(([rName, count]) => {
+                              const pct = Math.round((count / Math.max(dashboardMetrics.lost, 1)) * 100);
+                              return (
+                                <div key={rName}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 600, color: '#334155', marginBottom: 3 }}>
+                                    <span>{rName}</span>
+                                    <span>{count} ({pct}%)</span>
+                                  </div>
+                                  <div style={{ height: 8, background: '#f1f5f9', borderRadius: 4, overflow: 'hidden' }}>
+                                    <div style={{ width: `${pct}%`, height: '100%', background: '#ef4444', borderRadius: 4 }}></div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '8px 10px', fontSize: '0.775rem', color: '#991b1b', marginTop: 6 }}>
+                            💡 <strong>Intervention Tip:</strong> Offer fee installment plans or 15% merit scholarship to re-engage fee-dropped applicants.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 9. RECENT BRANCH OPERATIONS STREAM */}
+                {activeRoleCategories.includes('recent_activities') && (
+                  <div className="dashboard-card dashboard-col-6">
+                    <div className="dashboard-card-header">
+                      <div className="dashboard-card-title">
+                        <Activity size={16} color="#059669" />
+                        <span>Live Branch Activity & Audit Stream</span>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                        Real-time Feed
+                      </span>
+                    </div>
+                    <div className="dashboard-card-body" style={{ maxHeight: 260, overflowY: 'auto' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {branchActivities
+                          .filter((a) => !a.branchId || a.branchId === activeBranchId)
+                          .slice(0, 4)
+                          .map((act) => (
+                            <div key={act.id} style={{ display: 'flex', gap: 10, paddingBottom: 8, borderBottom: '1px solid #f1f5f9' }}>
+                              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#059669', marginTop: 5, flexShrink: 0 }}></div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontSize: '0.825rem', fontWeight: 700, color: '#0f172a' }}>{act.title}</span>
+                                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{act.timestamp}</span>
+                                </div>
+                                <div style={{ fontSize: '0.775rem', color: '#475569', marginTop: 2 }}>{act.description}</div>
+                                <div style={{ fontSize: '0.72rem', color: '#2563eb', marginTop: 2, fontWeight: 600 }}>Staff: {act.user}</div>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 10. COUNSELOR & STAFF WORKLOAD */}
+                {activeRoleCategories.includes('staff_workload') && canManageUsers && (
+                  <div className="dashboard-card dashboard-col-12">
+                    <div className="dashboard-card-header">
+                      <div className="dashboard-card-title">
+                        <Users size={16} color="#2563eb" />
+                        <span>Counselor Allocation & Team Workload</span>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                        Supervisor Oversight
+                      </span>
+                    </div>
+                    <div className="dashboard-card-body">
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                        {staffDistribution.map(([staffName, s]) => (
+                          <div key={staffName} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 14px', background: '#f8fafc' }}>
+                            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>
+                              {staffName}
+                            </div>
+                            <div style={{ fontSize: '0.775rem', color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Assigned: <strong>{s.total}</strong></span>
+                              <span>Inquiries: <strong>{s.inq}</strong></span>
+                              <span>Enrolled: <strong>{s.enrolled}</strong></span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ======================================================== */}
         {/* TAB 1: ADMISSIONS & LEADS (MARKED TO COURSE, CLASS & GROUP) */}
         {/* ======================================================== */}
@@ -5088,6 +5915,341 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* TAB 6: SETTINGS & ROLE DASHBOARD VIEWS */}
+        {/* ======================================================== */}
+        {activeTab === 'settings' && (
+          <div className="settings-container">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Settings size={20} color="#2563eb" />
+                  <span>CRM Settings & Role Dashboard Views</span>
+                </h2>
+                <p style={{ fontSize: '0.825rem', color: '#64748b', margin: '4px 0 0' }}>
+                  Customize dashboard categories for each role based on their permissions. Every role has a default dashboard view out of the box.
+                </p>
+              </div>
+
+              {settingsSuccessMessage && (
+                <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#065f46', padding: '6px 14px', borderRadius: 8, fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <CheckCircle size={14} color="#059669" />
+                  <span>{settingsSuccessMessage}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Settings Sub-Tab Navigation */}
+            <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid #e2e8f0', marginBottom: 20 }}>
+              <button
+                className={`btn ${settingsActiveTab === 'dashboard_roles' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+                onClick={() => setSettingsActiveTab('dashboard_roles')}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <LayoutDashboard size={14} />
+                <span>Role Dashboard Views</span>
+              </button>
+
+              <button
+                className={`btn ${settingsActiveTab === 'address_fields' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+                onClick={() => setSettingsActiveTab('address_fields')}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <MapPin size={14} />
+                <span>Student Address Field Settings</span>
+              </button>
+
+              <button
+                className={`btn ${settingsActiveTab === 'drop_reasons' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+                onClick={() => setSettingsActiveTab('drop_reasons')}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <TrendingDown size={14} />
+                <span>Drop Reasons Configuration</span>
+              </button>
+            </div>
+
+            {/* SUB-TAB 1: ROLE DASHBOARD CONFIGURATION */}
+            {settingsActiveTab === 'dashboard_roles' && (
+              <div>
+                {/* Role Selector Tabs */}
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>
+                    Select Role to Customize Dashboard:
+                  </label>
+                  <div className="settings-role-nav">
+                    {Object.values(ROLE_DEFINITIONS).map((r) => {
+                      const isSelected = r.key === selectedRoleForSettings;
+                      const activeCatCount = (
+                        (roleDashboardConfigs[r.key] || DEFAULT_ROLE_DASHBOARD_CONFIGS[r.key])?.enabledCategories || []
+                      ).filter((catId) => isCategoryPermittedForRole(catId, r.key, ROLE_DEFINITIONS)).length;
+
+                      return (
+                        <button
+                          key={r.key}
+                          className={`settings-role-btn ${isSelected ? 'active' : ''}`}
+                          onClick={() => setSelectedRoleForSettings(r.key)}
+                        >
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: isSelected ? '#ffffff' : r.color }}></span>
+                          <span>{r.label}</span>
+                          <span
+                            style={{
+                              fontSize: '0.68rem',
+                              padding: '1px 6px',
+                              borderRadius: 10,
+                              background: isSelected ? 'rgba(255,255,255,0.25)' : '#e2e8f0',
+                              color: isSelected ? '#ffffff' : '#475569',
+                              fontWeight: 700,
+                            }}
+                          >
+                            {activeCatCount} Cards
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Selected Role Permission & Summary Card */}
+                {(() => {
+                  const roleDef = ROLE_DEFINITIONS[selectedRoleForSettings] || ROLE_DEFINITIONS.admissions_counselor;
+                  const currentRoleConfig =
+                    roleDashboardConfigs[selectedRoleForSettings] ||
+                    DEFAULT_ROLE_DASHBOARD_CONFIGS[selectedRoleForSettings] || { enabledCategories: [] };
+                  const enabledList = currentRoleConfig.enabledCategories || [];
+
+                  return (
+                    <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 20, boxShadow: 'var(--shadow-sm)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 14, marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid #f1f5f9' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span
+                              className="dashboard-role-badge"
+                              style={{ background: roleDef.bg, color: roleDef.color, fontSize: '0.85rem', padding: '4px 12px' }}
+                            >
+                              <Shield size={14} /> {roleDef.label}
+                            </span>
+                            <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                              Default Dashboard Configuration
+                            </span>
+                          </div>
+                          <p style={{ margin: '6px 0 0', fontSize: '0.85rem', color: '#334155' }}>
+                            {roleDef.description}
+                          </p>
+
+                          {/* Role Permission Badges */}
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#475569' }}>Permissions:</span>
+                            <span className={roleDef.canManageLeads ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                              {roleDef.canManageLeads ? '✓ canManageLeads' : '✗ No Leads Mgmt'}
+                            </span>
+                            <span className={roleDef.canManageClasses ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                              {roleDef.canManageClasses ? '✓ canManageClasses' : '✗ No Classes Mgmt'}
+                            </span>
+                            <span className={roleDef.canManageBranches ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                              {roleDef.canManageBranches ? '✓ canManageBranches' : '✗ No Branch Mgmt'}
+                            </span>
+                            <span className={roleDef.canManageUsers ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                              {roleDef.canManageUsers ? '✓ canManageUsers' : '✗ No User Mgmt'}
+                            </span>
+                            <span className={roleDef.canManageTenants ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                              {roleDef.canManageTenants ? '✓ canManageTenants' : '✗ No Tenant Admin'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleResetRoleDashboard(selectedRoleForSettings)}
+                            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                          >
+                            <RefreshCw size={13} />
+                            <span>Reset Role Defaults</span>
+                          </button>
+
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => {
+                              if (currentUser.role === selectedRoleForSettings) {
+                                setActiveTab('dashboard');
+                                showToast(`Viewing your ${roleDef.label} dashboard`);
+                              } else {
+                                const targetUser = users.find((u) => u.role === selectedRoleForSettings);
+                                if (targetUser) {
+                                  setCurrentUserId(targetUser.id);
+                                  setActiveTab('dashboard');
+                                  showToast(`Switched user to ${targetUser.name} (${roleDef.label}) to preview dashboard`);
+                                } else {
+                                  setActiveTab('dashboard');
+                                }
+                              }
+                            }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                          >
+                            <Eye size={13} />
+                            <span>Preview as {roleDef.label}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Categories List with Permission Guards and Toggles */}
+                      <div className="category-config-list">
+                        {DASHBOARD_CATEGORIES_METADATA.map((cat) => {
+                          const isPermitted = isCategoryPermittedForRole(cat.id, selectedRoleForSettings, ROLE_DEFINITIONS);
+                          const isEnabled = enabledList.includes(cat.id) && isPermitted;
+
+                          return (
+                            <div
+                              key={cat.id}
+                              className={`category-config-item ${!isPermitted ? 'locked' : isEnabled ? 'active-enabled' : ''}`}
+                            >
+                              <div className="cat-info-col">
+                                <div className="cat-icon-box">
+                                  {cat.id === 'kpi_metrics' && <BarChart3 size={20} />}
+                                  {cat.id === 'admissions_pipeline' && <TrendingUp size={20} />}
+                                  {cat.id === 'priority_followups' && <PhoneCall size={20} />}
+                                  {cat.id === 'branch_performance' && <Building2 size={20} />}
+                                  {cat.id === 'academic_capacity' && <BookOpen size={20} />}
+                                  {cat.id === 'geographic_distribution' && <MapPin size={20} />}
+                                  {cat.id === 'drop_analytics' && <TrendingDown size={20} />}
+                                  {cat.id === 'recent_activities' && <Activity size={20} />}
+                                  {cat.id === 'staff_workload' && <Users size={20} />}
+                                  {cat.id === 'tenant_overview' && <School size={20} />}
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                  <div className="cat-title-line">
+                                    <span>{cat.title}</span>
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b', background: '#f1f5f9', padding: '1px 6px', borderRadius: 4 }}>
+                                      {cat.categoryGroup}
+                                    </span>
+                                    {isPermitted ? (
+                                      <span className="permission-pill-granted">
+                                        <Check size={11} /> Permitted
+                                      </span>
+                                    ) : (
+                                      <span className="permission-pill-locked">
+                                        <Lock size={11} /> Requires {cat.requiredPermission}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="cat-desc">{cat.description}</div>
+                                  {!isPermitted && (
+                                    <div style={{ fontSize: '0.72rem', color: '#b91c1c', marginTop: 4, fontStyle: 'italic' }}>
+                                      * This category is disabled because {roleDef.label} does not have the '{cat.requiredPermission}' privilege.
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                <label className="toggle-switch" title={isPermitted ? 'Toggle Category' : 'Permission Restricted'}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isEnabled}
+                                    disabled={!isPermitted}
+                                    onChange={() => handleToggleCategoryForRole(selectedRoleForSettings, cat.id)}
+                                  />
+                                  <span className="toggle-slider"></span>
+                                </label>
+                                <span style={{ fontSize: '0.775rem', fontWeight: 700, width: 60, color: isEnabled ? '#2563eb' : '#94a3b8' }}>
+                                  {isEnabled ? 'Active' : 'Hidden'}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* SUB-TAB 2: ADDRESS & ATTEND FIELD SETTINGS */}
+            {settingsActiveTab === 'address_fields' && (
+              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 20 }}>
+                <h3 style={{ margin: '0 0 8px', fontSize: '1rem', fontWeight: 700 }}>
+                  Student Residential Address & Attendance Settings (Module 1)
+                </h3>
+                <p style={{ fontSize: '0.825rem', color: '#64748b', marginBottom: 16 }}>
+                  Under SaaS specifications, Primary Residential Address is strictly mandatory (*). Remaining 7 fields (Area, Landmark, City, District, State, PIN Code, Country) remain optional.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ padding: 14, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>Primary Residential Address Field</div>
+                      <div style={{ fontSize: '0.775rem', color: '#64748b' }}>Always strictly mandatory across manual entry and bulk CSV import.</div>
+                    </div>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#16a34a', background: '#dcfce7', padding: '3px 10px', borderRadius: 6 }}>
+                      Mandatory * (System Required)
+                    </span>
+                  </div>
+
+                  <div style={{ padding: 14, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>Optional Residential Address Fields</div>
+                      <div style={{ fontSize: '0.775rem', color: '#64748b' }}>Area, Landmark, City, District, State, PIN Code, and Country.</div>
+                    </div>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#2563eb', background: '#eff6ff', padding: '3px 10px', borderRadius: 6 }}>
+                      Optional (Blank Allowed)
+                    </span>
+                  </div>
+
+                  <div style={{ padding: 14, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>Require Attend Address for Admissions</div>
+                      <div style={{ fontSize: '0.775rem', color: '#64748b' }}>Requires counselor to log which campus desk the candidate attended.</div>
+                    </div>
+                    <label className="toggle-switch">
+                      <input
+                        type="checkbox"
+                        checked={addressConfig.isAttendAddressMandatory}
+                        onChange={(e) => setAddressConfig({ ...addressConfig, isAttendAddressMandatory: e.target.checked })}
+                      />
+                      <span className="toggle-slider"></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB 3: DROP REASONS CONFIGURATION */}
+            {settingsActiveTab === 'drop_reasons' && (
+              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>
+                      Tenant Attrition & Drop Reasons Configuration
+                    </h3>
+                    <p style={{ margin: '4px 0 0', fontSize: '0.825rem', color: '#64748b' }}>
+                      Configure why candidates drop out of your admission pipeline.
+                    </p>
+                  </div>
+                  <button className="btn btn-primary btn-sm" onClick={() => setIsDropConfigModalOpen(true)}>
+                    + Add New Drop Reason
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                  {dropReasons.map((dr) => (
+                    <div key={dr.id} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, background: '#f8fafc' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0f172a' }}>{dr.name}</span>
+                        <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: 4, background: '#fee2e2', color: '#b91c1c', fontWeight: 700 }}>
+                          {dr.category}
+                        </span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.775rem', color: '#64748b' }}>{dr.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>
@@ -8011,6 +9173,279 @@ Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc 
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: QUICK CUSTOMIZE DASHBOARD FOR CURRENT ROLE */}
+      {customizeDashboardModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-dialog modal-md">
+            <div className="modal-header">
+              <div className="modal-title">
+                <SlidersHorizontal size={18} color="#2563eb" />
+                <span>Customize {currentUserRole.label} Dashboard</span>
+              </div>
+              <button className="btn-close" onClick={() => setCustomizeDashboardModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p style={{ fontSize: '0.825rem', color: '#64748b', marginBottom: 14 }}>
+                Toggle which category cards appear on your dashboard. Only categories permitted for the <strong>{currentUserRole.label}</strong> role can be enabled.
+              </p>
+
+              <div className="category-config-list">
+                {DASHBOARD_CATEGORIES_METADATA.map((cat) => {
+                  const isPermitted = isCategoryPermittedForRole(cat.id, currentUser.role, ROLE_DEFINITIONS);
+                  const isEnabled = activeRoleCategories.includes(cat.id);
+
+                  return (
+                    <div
+                      key={cat.id}
+                      className={`category-config-item ${!isPermitted ? 'locked' : isEnabled ? 'active-enabled' : ''}`}
+                      style={{ padding: '10px 12px' }}
+                    >
+                      <div className="cat-info-col" style={{ gap: 10 }}>
+                        <div className="cat-icon-box" style={{ width: 32, height: 32 }}>
+                          {cat.id === 'kpi_metrics' && <BarChart3 size={16} />}
+                          {cat.id === 'admissions_pipeline' && <TrendingUp size={16} />}
+                          {cat.id === 'priority_followups' && <PhoneCall size={16} />}
+                          {cat.id === 'branch_performance' && <Building2 size={16} />}
+                          {cat.id === 'academic_capacity' && <BookOpen size={16} />}
+                          {cat.id === 'geographic_distribution' && <MapPin size={16} />}
+                          {cat.id === 'drop_analytics' && <TrendingDown size={16} />}
+                          {cat.id === 'recent_activities' && <Activity size={16} />}
+                          {cat.id === 'staff_workload' && <Users size={16} />}
+                          {cat.id === 'tenant_overview' && <School size={16} />}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0f172a' }}>{cat.title}</div>
+                          <div style={{ fontSize: '0.72rem', color: isPermitted ? '#64748b' : '#b91c1c' }}>
+                            {isPermitted ? cat.categoryGroup : `🔒 Lacks ${cat.requiredPermission}`}
+                          </div>
+                        </div>
+                      </div>
+
+                      <label className="toggle-switch">
+                        <input
+                          type="checkbox"
+                          checked={isEnabled}
+                          disabled={!isPermitted}
+                          onChange={() => handleToggleCategoryForRole(currentUser.role, cat.id)}
+                        />
+                        <span className="toggle-slider"></span>
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => handleResetRoleDashboard(currentUser.role)}
+              >
+                Reset to Defaults
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setCustomizeDashboardModalOpen(false)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: FULL SETTINGS & ROLE DASHBOARD VIEWS MODAL */}
+      {isSettingsModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-dialog modal-lg settings-modal-dialog">
+            <div className="modal-header">
+              <div className="modal-title">
+                <Settings size={18} color="#2563eb" />
+                <span>Dashboard & Role View Settings</span>
+              </div>
+              <button className="btn-close" onClick={() => setIsSettingsModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ maxHeight: '78vh', overflowY: 'auto' }}>
+              {/* Role Selector Tabs */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Select Role to Configure:
+                </div>
+                <div className="settings-role-nav">
+                  {Object.values(ROLE_DEFINITIONS).map((r) => {
+                    const isSelected = r.key === selectedRoleForSettings;
+                    const activeCatCount = (
+                      (roleDashboardConfigs[r.key] || DEFAULT_ROLE_DASHBOARD_CONFIGS[r.key])?.enabledCategories || []
+                    ).filter((catId) => isCategoryPermittedForRole(catId, r.key, ROLE_DEFINITIONS)).length;
+
+                    return (
+                      <button
+                        key={r.key}
+                        className={`settings-role-btn ${isSelected ? 'active' : ''}`}
+                        onClick={() => setSelectedRoleForSettings(r.key)}
+                      >
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: isSelected ? '#ffffff' : r.color }}></span>
+                        <span>{r.label}</span>
+                        <span
+                          style={{
+                            fontSize: '0.68rem',
+                            padding: '1px 6px',
+                            borderRadius: 10,
+                            background: isSelected ? 'rgba(255,255,255,0.25)' : '#e2e8f0',
+                            color: isSelected ? '#ffffff' : '#475569',
+                            fontWeight: 700,
+                          }}
+                        >
+                          {activeCatCount}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Role Details and Permission List */}
+              {(() => {
+                const roleDef = ROLE_DEFINITIONS[selectedRoleForSettings] || ROLE_DEFINITIONS.admissions_counselor;
+                const currentRoleConfig =
+                  roleDashboardConfigs[selectedRoleForSettings] ||
+                  DEFAULT_ROLE_DASHBOARD_CONFIGS[selectedRoleForSettings] || { enabledCategories: [] };
+                const enabledList = currentRoleConfig.enabledCategories || [];
+
+                return (
+                  <div>
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginBottom: 14 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span
+                            className="dashboard-role-badge"
+                            style={{ background: roleDef.bg, color: roleDef.color, padding: '3px 10px' }}
+                          >
+                            <Shield size={12} /> {roleDef.label}
+                          </span>
+                          <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                            {roleDef.description}
+                          </span>
+                        </div>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleResetRoleDashboard(selectedRoleForSettings)}
+                          style={{ fontSize: '0.75rem', padding: '3px 8px' }}
+                        >
+                          <RefreshCw size={12} /> Reset to Defaults
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#475569' }}>Permissions:</span>
+                        <span className={roleDef.canManageLeads ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                          {roleDef.canManageLeads ? '✓ canManageLeads' : '✗ No Leads'}
+                        </span>
+                        <span className={roleDef.canManageClasses ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                          {roleDef.canManageClasses ? '✓ canManageClasses' : '✗ No Classes'}
+                        </span>
+                        <span className={roleDef.canManageBranches ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                          {roleDef.canManageBranches ? '✓ canManageBranches' : '✗ No Branch Mgmt'}
+                        </span>
+                        <span className={roleDef.canManageUsers ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                          {roleDef.canManageUsers ? '✓ canManageUsers' : '✗ No User Mgmt'}
+                        </span>
+                        <span className={roleDef.canManageTenants ? 'permission-pill-granted' : 'permission-pill-locked'}>
+                          {roleDef.canManageTenants ? '✓ canManageTenants' : '✗ No Tenant Admin'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="category-config-list">
+                      {DASHBOARD_CATEGORIES_METADATA.map((cat) => {
+                        const isPermitted = isCategoryPermittedForRole(cat.id, selectedRoleForSettings, ROLE_DEFINITIONS);
+                        const isEnabled = enabledList.includes(cat.id) && isPermitted;
+
+                        return (
+                          <div
+                            key={cat.id}
+                            className={`category-config-item ${!isPermitted ? 'locked' : isEnabled ? 'active-enabled' : ''}`}
+                            style={{ padding: '10px 14px' }}
+                          >
+                            <div className="cat-info-col">
+                              <div className="cat-icon-box" style={{ width: 34, height: 34 }}>
+                                {cat.id === 'kpi_metrics' && <BarChart3 size={18} />}
+                                {cat.id === 'admissions_pipeline' && <TrendingUp size={18} />}
+                                {cat.id === 'priority_followups' && <PhoneCall size={18} />}
+                                {cat.id === 'branch_performance' && <Building2 size={18} />}
+                                {cat.id === 'academic_capacity' && <BookOpen size={18} />}
+                                {cat.id === 'geographic_distribution' && <MapPin size={18} />}
+                                {cat.id === 'drop_analytics' && <TrendingDown size={18} />}
+                                {cat.id === 'recent_activities' && <Activity size={18} />}
+                                {cat.id === 'staff_workload' && <Users size={18} />}
+                                {cat.id === 'tenant_overview' && <School size={18} />}
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <div className="cat-title-line">
+                                  <span>{cat.title}</span>
+                                  {isPermitted ? (
+                                    <span className="permission-pill-granted">
+                                      <Check size={10} /> Permitted
+                                    </span>
+                                  ) : (
+                                    <span className="permission-pill-locked">
+                                      <Lock size={10} /> Requires {cat.requiredPermission}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="cat-desc">{cat.description}</div>
+                              </div>
+                            </div>
+
+                            <label className="toggle-switch">
+                              <input
+                                type="checkbox"
+                                checked={isEnabled}
+                                disabled={!isPermitted}
+                                onChange={() => handleToggleCategoryForRole(selectedRoleForSettings, cat.id)}
+                              />
+                              <span className="toggle-slider"></span>
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  setIsSettingsModalOpen(false);
+                  setActiveTab('settings');
+                }}
+              >
+                Go to Full Settings Screen
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setIsSettingsModalOpen(false)}
+              >
+                Save & Close
+              </button>
+            </div>
           </div>
         </div>
       )}

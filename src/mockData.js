@@ -135,6 +135,216 @@ export const ROLE_DEFINITIONS = {
   },
 };
 
+// 2B. Role-Based Dashboard Categories & Default Configurations
+export const DASHBOARD_CATEGORIES_METADATA = [
+  {
+    id: "kpi_metrics",
+    title: "Executive & Operational KPIs",
+    categoryGroup: "Metrics & Overview",
+    description: "Summary cards tracking Total Leads, Branch Inquiries, Enrolled Students, and Conversion Velocity.",
+    iconName: "BarChart3",
+    requiredPermission: null, // Public / all roles
+    minTier: "All Roles",
+  },
+  {
+    id: "admissions_pipeline",
+    title: "Admissions Funnel & Pipeline Velocity",
+    categoryGroup: "Funnel & Conversion",
+    description: "Visual stage-by-stage distribution of candidates (Inquiry -> Contacted -> Applied -> Admitted -> Enrolled -> Lost).",
+    iconName: "TrendingUp",
+    requiredPermission: "canManageLeads",
+    minTier: "Admissions & Counseling",
+  },
+  {
+    id: "priority_followups",
+    title: "Priority Follow-up & Action Queue",
+    categoryGroup: "Operational Queues",
+    description: "Actionable list of high and medium priority student leads needing immediate telephone call or WhatsApp message.",
+    iconName: "PhoneCall",
+    requiredPermission: "canManageLeads",
+    minTier: "Counselors & Field PRVO",
+  },
+  {
+    id: "branch_performance",
+    title: "Multi-Branch Operations & Comparison",
+    categoryGroup: "Multi-Branch Intelligence",
+    description: "Compare lead volume, conversion rate, and activity intensity across all assigned branches (Branches A, B, C).",
+    iconName: "Building2",
+    requiredPermission: "canManageBranches",
+    minTier: "Branch Managers & Admins",
+  },
+  {
+    id: "academic_capacity",
+    title: "Academic Courses, Batches & Classroom Capacity",
+    categoryGroup: "Academic Structure",
+    description: "Live classroom seat fill rates, enrolled students per batch, and curriculum capacity quotas.",
+    iconName: "BookOpen",
+    requiredPermission: "canManageClasses",
+    minTier: "Academic Staff & Faculty",
+  },
+  {
+    id: "geographic_distribution",
+    title: "Student Residential Address & Geographic Breakdown",
+    categoryGroup: "Geographic Intelligence",
+    description: "Spatial classification of prospective students by Area, Locality, City, District, and PIN Code.",
+    iconName: "MapPin",
+    requiredPermission: "canManageLeads",
+    minTier: "Admissions & Marketing",
+  },
+  {
+    id: "drop_analytics",
+    title: "Drop Reasons & Attrition Intelligence",
+    categoryGroup: "Drop & Retention",
+    description: "Categorized breakdown of lost candidates (Fees, Distance, Peers, Competitor) to optimize enrollment conversion.",
+    iconName: "TrendingDown",
+    requiredPermission: "canManageLeads",
+    minTier: "Counselors & Admins",
+  },
+  {
+    id: "recent_activities",
+    title: "Live Branch Operations & Audit Stream",
+    categoryGroup: "Audit & Feed",
+    description: "Real-time chronological activity feed of walk-in verifications, counselor phone calls, and campus visits.",
+    iconName: "Activity",
+    requiredPermission: null,
+    minTier: "All Operational Staff",
+  },
+  {
+    id: "staff_workload",
+    title: "Counselor Allocation & Team Workload",
+    categoryGroup: "Team Operations",
+    description: "Supervise lead distribution across counselors, teachers, and PRVOs with pending follow-up counts.",
+    iconName: "Users",
+    requiredPermission: "canManageUsers",
+    minTier: "Administrators & Supervisors",
+  },
+  {
+    id: "tenant_overview",
+    title: "Multi-Tenant Global Ecosystem Health",
+    categoryGroup: "Global Administration",
+    description: "Consortium-wide overview of all SaaS tenants, organizations, active users, and system infrastructure.",
+    iconName: "School",
+    requiredPermission: "canManageTenants",
+    minTier: "Super Admin Only",
+  },
+];
+
+export const DEFAULT_ROLE_DASHBOARD_CONFIGS = {
+  super_admin: {
+    roleKey: "super_admin",
+    enabledCategories: [
+      "tenant_overview",
+      "kpi_metrics",
+      "admissions_pipeline",
+      "branch_performance",
+      "staff_workload",
+      "academic_capacity",
+      "geographic_distribution",
+      "drop_analytics",
+      "recent_activities",
+    ],
+    updatedAt: "2026-11-19 12:00",
+  },
+  tenant_admin: {
+    roleKey: "tenant_admin",
+    enabledCategories: [
+      "kpi_metrics",
+      "admissions_pipeline",
+      "branch_performance",
+      "staff_workload",
+      "academic_capacity",
+      "geographic_distribution",
+      "drop_analytics",
+      "recent_activities",
+    ],
+    updatedAt: "2026-11-19 12:00",
+  },
+  branch_manager: {
+    roleKey: "branch_manager",
+    enabledCategories: [
+      "kpi_metrics",
+      "branch_performance",
+      "admissions_pipeline",
+      "priority_followups",
+      "academic_capacity",
+      "drop_analytics",
+      "recent_activities",
+    ],
+    updatedAt: "2026-11-19 12:00",
+  },
+  admissions_counselor: {
+    roleKey: "admissions_counselor",
+    enabledCategories: [
+      "kpi_metrics",
+      "priority_followups",
+      "admissions_pipeline",
+      "geographic_distribution",
+      "drop_analytics",
+      "recent_activities",
+    ],
+    updatedAt: "2026-11-19 12:00",
+  },
+  academic_staff: {
+    roleKey: "academic_staff",
+    enabledCategories: [
+      "kpi_metrics",
+      "academic_capacity",
+      "recent_activities",
+    ],
+    updatedAt: "2026-11-19 12:00",
+  },
+  teacher: {
+    roleKey: "teacher",
+    enabledCategories: [
+      "kpi_metrics",
+      "priority_followups",
+      "admissions_pipeline",
+      "geographic_distribution",
+    ],
+    updatedAt: "2026-11-19 12:00",
+  },
+  prvo: {
+    roleKey: "prvo",
+    enabledCategories: [
+      "kpi_metrics",
+      "geographic_distribution",
+      "priority_followups",
+      "admissions_pipeline",
+    ],
+    updatedAt: "2026-11-19 12:00",
+  },
+};
+
+export function isCategoryPermittedForRole(categoryId, roleKey, roleDefinitions = ROLE_DEFINITIONS) {
+  const roleDef = roleDefinitions[roleKey];
+  if (!roleDef) return false;
+  const cat = DASHBOARD_CATEGORIES_METADATA.find((c) => c.id === categoryId);
+  if (!cat) return false;
+  if (!cat.requiredPermission) return true; // universal category
+
+  if (cat.requiredPermission === "canManageTenants") {
+    return Boolean(roleDef.canManageTenants);
+  }
+  if (cat.requiredPermission === "canManageUsers") {
+    return Boolean(roleDef.canManageUsers);
+  }
+  if (cat.requiredPermission === "canManageBranches") {
+    return Boolean(
+      roleDef.canManageBranches ||
+      roleKey === "branch_manager" ||
+      roleKey === "super_admin" ||
+      roleKey === "tenant_admin"
+    );
+  }
+  if (cat.requiredPermission === "canManageClasses") {
+    return Boolean(roleDef.canManageClasses || roleKey === "academic_staff");
+  }
+  if (cat.requiredPermission === "canManageLeads") {
+    return Boolean(roleDef.canManageLeads);
+  }
+  return Boolean(roleDef[cat.requiredPermission]);
+}
+
 // 3. User Accounts with Roles, Branch Access, Compulsory Default Branch, and Group Assignments
 export const INITIAL_USERS = [
   {

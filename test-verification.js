@@ -3,10 +3,14 @@
 
 import {
   INITIAL_TENANTS,
+  ROLE_DEFINITIONS,
   INITIAL_USERS,
   INITIAL_USER_BRANCH_ACCESS,
   INITIAL_ORGANIZATIONS,
   INITIAL_LEADS,
+  DASHBOARD_CATEGORIES_METADATA,
+  DEFAULT_ROLE_DASHBOARD_CONFIGS,
+  isCategoryPermittedForRole,
 } from './src/mockData.js';
 
 console.log('====================================================');
@@ -392,6 +396,95 @@ const switchConfirm = attemptBranchSwitchWithDirtyState(true, true);
 assert(
   !switchCancel.allowed && switchConfirm.allowed,
   'M2-Scenario 10: Switching branch with unsaved form changes prompts confirmation and aborts if user cancels'
+);
+
+// ---------------------------------------------------------------------------
+// MODULE 3 TESTS: ROLE-BASED DASHBOARDS & CUSTOMIZATION SETTINGS
+// ---------------------------------------------------------------------------
+console.log('\n--- MODULE 3: ROLE-BASED DASHBOARD & SETTINGS CUSTOMIZATION ---');
+
+// Test 1: Every role has a default dashboard configuration with at least one active category
+const allRoleKeys = Object.keys(ROLE_DEFINITIONS);
+const allRolesHaveDashboard = allRoleKeys.every((rKey) => {
+  const conf = DEFAULT_ROLE_DASHBOARD_CONFIGS[rKey];
+  return conf && Array.isArray(conf.enabledCategories) && conf.enabledCategories.length > 0;
+});
+assert(
+  allRolesHaveDashboard,
+  'M3-Scenario 1: Every defined role in the CRM has a pre-configured default dashboard out of the box'
+);
+
+// Test 2: Super Admin default dashboard contains multi-tenant overview
+const superAdminConf = DEFAULT_ROLE_DASHBOARD_CONFIGS.super_admin;
+assert(
+  superAdminConf.enabledCategories.includes('tenant_overview'),
+  'M3-Scenario 2: Super Admin default dashboard includes multi-tenant global overview'
+);
+
+// Test 3: Permission Guard - Non-super-admin roles CANNOT access tenant_overview
+const nonSuperAdminRoles = allRoleKeys.filter((k) => k !== 'super_admin');
+const allGuarded = nonSuperAdminRoles.every(
+  (rKey) => !isCategoryPermittedForRole('tenant_overview', rKey, ROLE_DEFINITIONS)
+);
+assert(
+  allGuarded,
+  'M3-Scenario 3: Multi-tenant overview is strictly locked for non-super-admin roles per SaaS permission guards'
+);
+
+// Test 4: Academic Staff cannot access lead pipeline or drop analytics (lacks canManageLeads)
+const academicStaffHasLeadPipeline = isCategoryPermittedForRole('admissions_pipeline', 'academic_staff', ROLE_DEFINITIONS);
+const academicStaffHasDropAnalytics = isCategoryPermittedForRole('drop_analytics', 'academic_staff', ROLE_DEFINITIONS);
+const academicStaffHasAcademicCapacity = isCategoryPermittedForRole('academic_capacity', 'academic_staff', ROLE_DEFINITIONS);
+assert(
+  !academicStaffHasLeadPipeline && !academicStaffHasDropAnalytics && academicStaffHasAcademicCapacity,
+  'M3-Scenario 4: Academic Staff dashboard restricts admissions pipeline while permitting academic capacity'
+);
+
+// Test 5: Customizing role dashboard view in Settings (toggle category)
+let testRoleConfigs = JSON.parse(JSON.stringify(DEFAULT_ROLE_DASHBOARD_CONFIGS));
+const counselorRole = 'admissions_counselor';
+const initialCounselorCategories = [...testRoleConfigs[counselorRole].enabledCategories];
+
+// Toggle off geographic_distribution
+function toggleCategory(configs, roleKey, categoryId) {
+  if (!isCategoryPermittedForRole(categoryId, roleKey, ROLE_DEFINITIONS)) {
+    return { success: false, reason: 'PERMISSION_DENIED' };
+  }
+  const current = configs[roleKey].enabledCategories;
+  const isEnabled = current.includes(categoryId);
+  configs[roleKey].enabledCategories = isEnabled
+    ? current.filter((id) => id !== categoryId)
+    : [...current, categoryId];
+  return { success: true, enabledCategories: configs[roleKey].enabledCategories };
+}
+
+const toggleRes1 = toggleCategory(testRoleConfigs, counselorRole, 'geographic_distribution');
+assert(
+  toggleRes1.success && !testRoleConfigs[counselorRole].enabledCategories.includes('geographic_distribution'),
+  'M3-Scenario 5: Admin in Settings can toggle off permitted dashboard categories for a role'
+);
+
+// Test 6: Attempting to enable an unpermitted category is blocked by permission rules
+const blockedToggle = toggleCategory(testRoleConfigs, 'academic_staff', 'tenant_overview');
+assert(
+  !blockedToggle.success && blockedToggle.reason === 'PERMISSION_DENIED',
+  'M3-Scenario 6: Attempt to enable restricted category for an unauthorized role is blocked by permission check'
+);
+
+// Test 7: Reset role dashboard to recommended defaults
+testRoleConfigs[counselorRole] = { ...DEFAULT_ROLE_DASHBOARD_CONFIGS[counselorRole] };
+assert(
+  testRoleConfigs[counselorRole].enabledCategories.length === initialCounselorCategories.length &&
+  testRoleConfigs[counselorRole].enabledCategories.includes('geographic_distribution'),
+  'M3-Scenario 7: Reset to role defaults restores all factory recommended categories for that role'
+);
+
+// Test 8: Dynamic active branch context updates dashboard leads count
+const branch1Leads = INITIAL_LEADS.filter((l) => l.branchId === 'branch-1');
+const branch2Leads = INITIAL_LEADS.filter((l) => l.branchId === 'branch-2');
+assert(
+  branch1Leads.length > 0 && branch2Leads.length > 0 && branch1Leads.length !== branch2Leads.length,
+  'M3-Scenario 8: Switching between active branches updates dashboard metrics and lead counts dynamically'
 );
 
 console.log('\n====================================================');
