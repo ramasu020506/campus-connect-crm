@@ -235,7 +235,12 @@ export default function App() {
   });
 
   // Mobile App Mode State (PRV Staff Mobile View)
-  const [isMobileViewMode, setIsMobileViewMode] = useState(false);
+  const [isMobileViewMode, setIsMobileViewMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.location.search.includes('mode=mobile') || window.innerWidth <= 768;
+    }
+    return false;
+  });
   const [mobileActiveTab, setMobileActiveTab] = useState('leads'); // 'leads' | 'add' | 'inbound' | 'drop_stats' | 'profile'
   const [isPwaModalOpen, setIsPwaModalOpen] = useState(false);
 
@@ -6008,21 +6013,63 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                 For teachers, PRVs, and field coordinators. Download the Android APK or install the Progressive Web App (PWA) directly to your smartphone.
               </p>
 
-              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => {
-                    showToast('⬇️ Downloading CampusConnect-PRV-v2.4.0.apk (18.4 MB)...');
-                    setTimeout(() => {
-                      showToast('✅ Download Complete! Tap to install APK on your mobile device.');
-                    }, 1200);
-                  }}
-                  style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, padding: '10px 14px' }}
-                >
-                  <Download size={16} /> Download Android APK (.apk)
-                </button>
+              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {/* 1. Instant Mobile URL Access */}
+                <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '12px 14px', textAlign: 'left' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1e40af', marginBottom: 4 }}>
+                    📱 Live Mobile App Link
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#1e3a8a', wordBreak: 'break-all', marginBottom: 8, fontFamily: 'monospace', background: '#ffffff', padding: '6px 8px', borderRadius: 6, border: '1px solid #dbeafe' }}>
+                    https://campus-connect-crm.expo.app
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => {
+                        if (navigator.clipboard) {
+                          navigator.clipboard.writeText('https://campus-connect-crm.expo.app');
+                          showToast('📋 App URL copied to clipboard! Send to staff/teachers via WhatsApp.');
+                        } else {
+                          showToast('App URL: https://campus-connect-crm.expo.app');
+                        }
+                      }}
+                      style={{ flex: 1, fontSize: '0.75rem', padding: '6px 10px' }}
+                    >
+                      📋 Copy Link for Staff
+                    </button>
+                    <a
+                      href="https://campus-connect-crm.expo.app/?mode=mobile"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-secondary btn-sm"
+                      style={{ flex: 1, fontSize: '0.75rem', padding: '6px 10px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                    >
+                      🚀 Open Mobile URL
+                    </a>
+                  </div>
+                </div>
 
+                {/* 2. EAS Cloud Build APK Link */}
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '12px 14px', textAlign: 'left' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0f172a', marginBottom: 2 }}>
+                    🤖 Android APK Package (.apk)
+                  </div>
+                  <div style={{ fontSize: '0.725rem', color: '#64748b', marginBottom: 8 }}>
+                    Generated and hosted in your Expo EAS account under project <code style={{ color: '#2563eb' }}>@rahman777/campus-connect-crm</code>.
+                  </div>
+                  <a
+                    href="https://expo.dev/accounts/rahman777/projects/campus-connect-crm/builds"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-primary"
+                    style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, padding: '8px 12px', textDecoration: 'none', fontSize: '0.825rem' }}
+                  >
+                    <Download size={15} /> Open Expo EAS Builds & Download APK
+                  </a>
+                </div>
+
+                {/* 3. In-Browser Simulator */}
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -6031,18 +6078,31 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                     setIsMobileViewMode(true);
                     showToast('📲 Opened Mobile App View! You can test all PRV mobile features.');
                   }}
-                  style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, padding: '10px 14px' }}
+                  style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, padding: '9px 14px', fontSize: '0.825rem' }}
                 >
-                  <Smartphone size={16} /> Launch Interactive Mobile App View
+                  <Smartphone size={16} /> Preview PRV Mobile Smartphone Frame
                 </button>
               </div>
 
-              <div style={{ marginTop: 16, textAlign: 'left', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0', fontSize: '0.75rem', color: '#475569' }}>
-                <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>Mobile App Features:</div>
-                <div>• <strong>Sole Lead Ownership:</strong> Teachers can only view & edit their own student leads.</div>
-                <div>• <strong>Multi-Factor Duplicate Engine:</strong> Instant duplicate warning by student name, parent name, mobile, address, or door no.</div>
-                <div>• <strong>Direct Phone Engagement:</strong> Instant Call, SMS, and WhatsApp to parents.</div>
-                <div>• <strong>Inbound & Area Queue:</strong> Claim or manage unassigned leads per locality/area.</div>
+              {/* Step-by-Step Mobile Install Guide */}
+              <div style={{ marginTop: 14, textAlign: 'left', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0', fontSize: '0.75rem', color: '#475569' }}>
+                <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>
+                  📲 1-Click Install to Phone (No App Store Needed):
+                </div>
+                <div style={{ marginBottom: 4 }}>
+                  • <strong>Android (Chrome):</strong> Open <a href="https://campus-connect-crm.expo.app" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontWeight: 600 }}>campus-connect-crm.expo.app</a> ➔ tap the <strong>⋮ (3 dots)</strong> menu ➔ tap <strong>"Install app"</strong> or <strong>"Add to Home screen"</strong>.
+                </div>
+                <div>
+                  • <strong>iPhone (Safari):</strong> Open in Safari ➔ tap the <strong>Share</strong> button (square with arrow) ➔ tap <strong>"Add to Home Screen"</strong>.
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10, textAlign: 'left', background: '#f1f5f9', padding: 10, borderRadius: 8, border: '1px solid #cbd5e1', fontSize: '0.725rem', color: '#334155' }}>
+                <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: 3 }}>Mobile App Staff Features:</div>
+                <div>• <strong>Sole Lead Ownership:</strong> Teachers can only view & edit their own leads.</div>
+                <div>• <strong>Duplicate Prevention:</strong> Real-time match by student, parent, phone, address, or door no.</div>
+                <div>• <strong>Direct Calling & WhatsApp:</strong> 1-tap call, SMS, or WhatsApp to parents directly.</div>
+                <div>• <strong>Inbound Leads Queue:</strong> Claim unassigned area-based leads on the go.</div>
               </div>
             </div>
 

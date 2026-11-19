@@ -1,0 +1,18 @@
+{
+  "short_name": "CampusConnect",
+  "name": "CampusConnect Teacher & PRV Mobile App",
+  "description": "Admissions CRM and PRV Teacher mobile lead management portal.",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/?mode=mobile",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "display": "standalone",
+  "orientation": "portrait"
+}
