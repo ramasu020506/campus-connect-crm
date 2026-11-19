@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "CampusConnect CRM",
+    "slug": "campus-connect-crm",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "com.rahman777.campusconnectcrm"
+    },
+    "web": {
+      "favicon": "./public/vite.svg",
+      "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "b2ab8a60-47e9-4194-a8c0-12c008fad8e4"
+      }
+    }
+  }
+}
