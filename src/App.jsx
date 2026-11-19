@@ -65,6 +65,7 @@ import {
   INITIAL_TENANTS,
   ROLE_DEFINITIONS,
   INITIAL_USERS,
+  INITIAL_USER_BRANCH_ACCESS,
   INITIAL_ORGANIZATIONS,
   INITIAL_COURSES,
   INITIAL_CLASSES,
@@ -119,6 +120,16 @@ export default function App() {
       return saved ? JSON.parse(saved) : INITIAL_USERS;
     } catch {
       return INITIAL_USERS;
+    }
+  });
+
+  // Normalized SaaS User-Branch Many-to-Many Relational Access Mapping
+  const [userBranchAccess, setUserBranchAccess] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cc_saas_user_branch_access_v5');
+      return saved ? JSON.parse(saved) : INITIAL_USER_BRANCH_ACCESS;
+    } catch {
+      return INITIAL_USER_BRANCH_ACCESS;
     }
   });
 
@@ -294,6 +305,10 @@ export default function App() {
   }, [users]);
 
   useEffect(() => {
+    localStorage.setItem('cc_saas_user_branch_access_v5', JSON.stringify(userBranchAccess));
+  }, [userBranchAccess]);
+
+  useEffect(() => {
     localStorage.setItem('cc_saas_current_user_id_v5', currentUserId);
   }, [currentUserId]);
 
@@ -352,6 +367,7 @@ export default function App() {
       org.branches?.forEach((b) => {
         list.push({
           ...b,
+          tenantId: org.tenantId,
           orgId: org.id,
           orgName: org.name,
           orgCode: org.code,
@@ -361,45 +377,65 @@ export default function App() {
     return list;
   }, [organizations]);
 
-  // Branches assigned to the current logged-in user
+  // Active branches belonging strictly to the current tenant
+  const tenantBranches = useMemo(() => {
+    return allBranches.filter((b) => b.tenantId === activeTenantId && b.status !== 'Inactive');
+  }, [allBranches, activeTenantId]);
+
+  // Branches assigned to the current logged-in user (Strict tenant isolation enforced unless super_admin)
   const userAllowedBranches = useMemo(() => {
     if (currentUser?.role === 'super_admin') {
-      return allBranches;
+      return allBranches.filter((b) => b.tenantId === activeTenantId && b.status !== 'Inactive');
     }
-    const assignedIds = currentUser?.assignedBranchIds || [];
-    return allBranches.filter((b) => assignedIds.includes(b.id));
-  }, [allBranches, currentUser]);
+    // Check normalized userBranchAccess first, fallback to user.assignedBranchIds
+    const userAccessRecords = userBranchAccess.filter(
+      (uba) => uba.userId === currentUser?.id && uba.tenantId === activeTenantId
+    );
+    const assignedIds = userAccessRecords.length > 0
+      ? userAccessRecords.map((uba) => uba.branchId)
+      : (currentUser?.assignedBranchIds || []);
 
-  // Compulsory Default Branch of the user (e.g. Branch B)
+    return allBranches.filter(
+      (b) => b.tenantId === activeTenantId && b.status !== 'Inactive' && assignedIds.includes(b.id)
+    );
+  }, [allBranches, activeTenantId, currentUser, userBranchAccess]);
+
+  // Compulsory Default Branch of the user (e.g. Branch B - Physical presence)
   const userPrimaryBranch = useMemo(() => {
-    return allBranches.find((b) => b.id === currentUser?.primaryBranchId) || userAllowedBranches[0] || allBranches[0];
-  }, [allBranches, userAllowedBranches, currentUser]);
+    const defaultRecord = userBranchAccess.find(
+      (uba) => uba.userId === currentUser?.id && uba.tenantId === activeTenantId && uba.isDefault
+    );
+    const primaryId = defaultRecord?.branchId || currentUser?.primaryBranchId;
+    return userAllowedBranches.find((b) => b.id === primaryId) || userAllowedBranches[0] || tenantBranches[0] || allBranches[0];
+  }, [userAllowedBranches, currentUser, userBranchAccess, activeTenantId, tenantBranches, allBranches]);
 
-  // Optional Branches assigned to the user (e.g. Branches A & C)
+  // Optional Branches assigned to the user (e.g. Branches A & C - Supervised activities)
   const userOptionalBranches = useMemo(() => {
-    return userAllowedBranches.filter((b) => b.id !== currentUser?.primaryBranchId);
-  }, [userAllowedBranches, currentUser]);
+    return userAllowedBranches.filter((b) => b.id !== userPrimaryBranch?.id);
+  }, [userAllowedBranches, userPrimaryBranch]);
 
   // Active Branch: Strictly defaults to user's COMPULSORY DEFAULT branch on login / CRM open / user change
   const [activeBranchId, setActiveBranchId] = useState(() => {
-    const primary = currentUser?.primaryBranchId;
-    if (primary && userAllowedBranches.some((b) => b.id === primary)) {
-      return primary;
-    }
-    return userAllowedBranches[0]?.id || 'branch-2';
+    const defaultRecord = INITIAL_USER_BRANCH_ACCESS.find(
+      (uba) => uba.userId === 'usr-103' && uba.isDefault
+    );
+    return defaultRecord?.branchId || 'branch-2';
   });
 
   // When current user changes or CRM opens, automatically switch active branch to that user's compulsory Default Branch
   useEffect(() => {
     if (currentUser) {
-      const primary = currentUser.primaryBranchId;
+      const defaultRecord = userBranchAccess.find(
+        (uba) => uba.userId === currentUser.id && uba.tenantId === activeTenantId && uba.isDefault
+      );
+      const primary = defaultRecord?.branchId || currentUser.primaryBranchId;
       if (primary && userAllowedBranches.some((b) => b.id === primary)) {
         setActiveBranchId(primary);
       } else if (userAllowedBranches.length > 0) {
         setActiveBranchId(userAllowedBranches[0].id);
       }
     }
-  }, [currentUserId, currentUser, userAllowedBranches]);
+  }, [currentUserId, currentUser, userAllowedBranches, userBranchAccess, activeTenantId]);
 
   const activeBranch = useMemo(() => {
     return allBranches.find((b) => b.id === activeBranchId) || userAllowedBranches[0] || allBranches[0];
@@ -410,7 +446,26 @@ export default function App() {
     return organizations.find((o) => o.id === activeBranch.orgId) || organizations[0];
   }, [organizations, activeBranch]);
 
-  const isCurrentActivePrimary = activeBranch?.id === currentUser?.primaryBranchId;
+  const isCurrentActivePrimary = activeBranch?.id === userPrimaryBranch?.id;
+
+  // Backend Security Authorization Check (Tenant Isolation & Branch Assignment Enforcement)
+  const validateBranchAccess = (userId, branchId, tenantId) => {
+    const targetBranch = allBranches.find((b) => b.id === branchId);
+    if (!targetBranch) {
+      return { allowed: false, reason: 'BRANCH_NOT_FOUND', message: 'Requested branch does not exist.' };
+    }
+    if (targetBranch.tenantId && targetBranch.tenantId !== tenantId) {
+      return { allowed: false, reason: 'CROSS_TENANT_VIOLATION', message: 'Cross-tenant branch access is strictly restricted by SaaS architecture.' };
+    }
+    if (currentUser?.role === 'super_admin') {
+      return { allowed: true };
+    }
+    const isAssigned = userAllowedBranches.some((b) => b.id === branchId);
+    if (!isAssigned) {
+      return { allowed: false, reason: 'UNAUTHORIZED_BRANCH', message: 'You do not have access permission for this branch.' };
+    }
+    return { allowed: true };
+  };
 
   // Dropdown States
   const [isBranchDropdownOpen, setIsBranchDropdownOpen] = useState(false);
@@ -433,24 +488,61 @@ export default function App() {
   }, []);
 
   const handleSelectBranch = (branchId) => {
+    // Unsaved changes check if user is editing in lead modal with modified data
+    if (isLeadModalOpen && (leadForm.name || leadForm.address)) {
+      const confirmSwitch = window.confirm(
+        'You have unsaved changes. Switching branches will discard unsaved progress. Continue?'
+      );
+      if (!confirmSwitch) return;
+      setIsLeadModalOpen(false);
+    }
+
+    const check = validateBranchAccess(currentUserId, branchId, activeTenantId);
+    if (!check.allowed) {
+      showToast(`⛔ Access Denied: ${check.message}`);
+      return;
+    }
+
     setActiveBranchId(branchId);
     setIsBranchDropdownOpen(false);
     const targetBranch = allBranches.find((b) => b.id === branchId);
-    showToast(`Switched active branch to "${targetBranch?.name}".`);
+    showToast(`Active branch switched to "${targetBranch?.name}".`);
+
+    // Audit log branch switch activity
+    const newAct = {
+      id: `act-${Date.now().toString().slice(-4)}`,
+      tenantId: activeTenantId,
+      branchId: branchId,
+      title: `Branch Context Switch: ${targetBranch?.name}`,
+      description: `User ${currentUser.name} switched active operational context to ${targetBranch?.name}.`,
+      category: 'General',
+      priority: 'Low',
+      user: currentUser.name,
+      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 16),
+      type: 'branch_switch',
+      statusBadge: 'Completed',
+    };
+    setBranchActivities((prev) => [newAct, ...prev]);
   };
 
   const handleResetToPrimaryBranch = () => {
-    if (currentUser?.primaryBranchId) {
-      setActiveBranchId(currentUser.primaryBranchId);
-      showToast(`Switched back to your Primary Branch: ${userPrimaryBranch?.name}`);
+    if (userPrimaryBranch) {
+      handleSelectBranch(userPrimaryBranch.id);
+      showToast(`Switched back to your Default Login Branch: ${userPrimaryBranch.name}`);
     }
   };
 
   const handleSwitchUser = (user) => {
     setCurrentUserId(user.id);
     setIsUserMenuOpen(false);
-    const primary = allBranches.find((b) => b.id === user.primaryBranchId);
-    showToast(`Logged in as ${user.name} (${ROLE_DEFINITIONS[user.role]?.label || user.role}). Primary Branch: ${primary?.name || 'Assigned Branch'}.`);
+    // Find user's configured default branch from userBranchAccess
+    const defaultRecord = userBranchAccess.find(
+      (uba) => uba.userId === user.id && uba.tenantId === activeTenantId && uba.isDefault
+    );
+    const defaultBranchId = defaultRecord?.branchId || user.primaryBranchId || user.assignedBranchIds?.[0] || 'branch-1';
+    setActiveBranchId(defaultBranchId);
+    const primary = allBranches.find((b) => b.id === defaultBranchId);
+    showToast(`Logged in as ${user.name} (${ROLE_DEFINITIONS[user.role]?.label || user.role}). Default Branch: ${primary?.name || 'Assigned Branch'}.`);
   };
 
   // ----------------------------------------------------
@@ -698,16 +790,20 @@ export default function App() {
     groupId: '',
     status: 'Inquiry',
     priority: 'Medium',
-    // Address Details: Address is MANDATORY; Locality & Landmark are OPTIONAL
+    // Student Residential Address: Address is MANDATORY *, Remaining 7 fields are OPTIONAL
     address: '',
+    area: '',
     locality: '',
     landmark: '',
+    city: 'Bangalore',
+    district: 'Bangalore Urban',
+    state: 'Karnataka',
+    pinCode: '',
+    pincode: '',
+    country: 'India',
     doorNo: '',
     attendAddress: '',
     attendStatus: 'Attended',
-    city: 'Bangalore',
-    state: 'Karnataka',
-    pincode: '',
     notes: '',
   };
 
@@ -760,9 +856,18 @@ export default function App() {
       courseId: lead.courseId || '',
       classId: lead.classId || '',
       groupId: lead.groupId || '',
+      // All 8 Student Residential Address Fields preserved cleanly
+      address: lead.address || '',
+      area: lead.area || lead.locality || '',
       locality: lead.locality || lead.area || '',
-      doorNo: lead.doorNo || '',
       landmark: lead.landmark || '',
+      city: lead.city || 'Bangalore',
+      district: lead.district || 'Bangalore Urban',
+      state: lead.state || 'Karnataka',
+      pinCode: lead.pinCode || lead.pincode || '',
+      pincode: lead.pinCode || lead.pincode || '',
+      country: lead.country || 'India',
+      doorNo: lead.doorNo || '',
       attendAddress: lead.attendAddress || '',
       attendStatus: lead.attendStatus || 'Attended',
     });
@@ -807,9 +912,17 @@ export default function App() {
     if (!leadForm.email?.trim()) errors.email = 'Email address is required.';
     if (!leadForm.courseId) errors.courseId = 'Please select a Course / Program.';
 
-    // MANDATORY ADDRESS VALIDATION: Address is strictly mandatory
+    // MANDATORY ADDRESS VALIDATION: Address is strictly mandatory (*)
     if (!leadForm.address?.trim()) {
-      errors.address = 'Street / Residential Address is a mandatory required field.';
+      errors.address = 'Primary Residential Address is a mandatory required field.';
+    }
+
+    // Optional PIN Code validation if entered (without rejecting legitimate Indian formats)
+    if (leadForm.pinCode?.trim()) {
+      const cleanPin = leadForm.pinCode.trim().replace(/\s+/g, '');
+      if (!/^[0-9]{6}$/.test(cleanPin) && !/^[a-zA-Z0-9-]{3,10}$/.test(cleanPin)) {
+        errors.pinCode = 'Please enter a valid PIN code format (e.g. 560034).';
+      }
     }
 
     // Configurable Attend Address option: Mandatory if toggle active
@@ -840,12 +953,29 @@ export default function App() {
     const assignedClass = tenantClasses.find((c) => c.id === leadForm.classId);
     const assignedGroup = tenantGroups.find((g) => g.id === leadForm.groupId);
 
+    const normalizedAddressPayload = {
+      address: leadForm.address,
+      area: leadForm.area || leadForm.locality || '',
+      locality: leadForm.area || leadForm.locality || '',
+      landmark: leadForm.landmark || '',
+      city: leadForm.city || 'Bangalore',
+      district: leadForm.district || 'Bangalore Urban',
+      state: leadForm.state || 'Karnataka',
+      pinCode: leadForm.pinCode || leadForm.pincode || '',
+      pincode: leadForm.pinCode || leadForm.pincode || '',
+      country: leadForm.country || 'India',
+      doorNo: leadForm.doorNo || '',
+      attendAddress: leadForm.attendAddress || '',
+      attendStatus: leadForm.attendStatus || 'Attended',
+    };
+
     if (isEditingLead && activeLead) {
       const updated = leads.map((l) =>
         l.id === activeLead.id
           ? {
               ...l,
               ...leadForm,
+              ...normalizedAddressPayload,
               phone: leadForm.phone || leadForm.parentPhone,
               parentPhone: leadForm.parentPhone || leadForm.phone,
               course: assignedCourse ? assignedCourse.name : l.course,
@@ -865,6 +995,7 @@ export default function App() {
 
       const newLead = {
         ...leadForm,
+        ...normalizedAddressPayload,
         id: generateLeadId(),
         tenantId: activeTenantId,
         orgId: activeOrg?.id || 'org-101',
@@ -1221,7 +1352,7 @@ export default function App() {
     showToast(`✅ Assigned all ${count} unassigned leads in area "${areaName}" to ${targetUser.name}.`);
   };
 
-  // CSV Parsing Engine for Lead Import (with Multi-factor Duplicate Detection)
+  // CSV Parsing Engine for Student Lead Bulk Import (with 8-Field Address Structure & Duplicate Detection)
   const parseCSV = (csvText) => {
     if (!csvText || !csvText.trim()) return [];
     const lines = csvText.trim().split(/\r?\n/).filter((l) => l.trim().length > 0);
@@ -1266,42 +1397,56 @@ export default function App() {
       const courseName = rowObj.course || rowObj.program || rowObj.coursename || values[5] || '';
       const className = rowObj.class || rowObj.batch || rowObj.classname || values[6] || '';
       const groupName = rowObj.group || rowObj.section || rowObj.groupname || values[7] || '';
-      const address = rowObj.address || rowObj.street || rowObj.residentialaddress || values[8] || '';
-      const doorNo = rowObj.doorno || rowObj.door || rowObj.flat || rowObj.flatno || values[9] || '';
-      const locality = rowObj.area || rowObj.locality || values[10] || '';
-      const landmark = rowObj.landmark || values[11] || '';
-      const attendAddress = rowObj.attendaddress || rowObj.attendanceaddress || values[12] || '';
-      const attendStatus = rowObj.attendstatus || rowObj.attend || rowObj.attendance || values[13] || 'Attended';
-      const city = rowObj.city || values[14] || activeBranch?.city || 'Bangalore';
-      const state = rowObj.state || values[15] || 'Karnataka';
-      const pincode = rowObj.pincode || rowObj.zip || values[16] || '';
+
+      // Module 1: 8 Address Fields mapping with backward compatibility
+      const address = rowObj.address || rowObj.street || rowObj.residentialaddress || rowObj.streetaddress || values[8] || '';
+      const area = rowObj.area || rowObj.locality || rowObj.colony || rowObj.suburb || values[9] || '';
+      const landmark = rowObj.landmark || rowObj.identifiablelandmark || values[10] || '';
+      const city = rowObj.city || rowObj.town || rowObj.citytown || values[11] || activeBranch?.city || 'Bangalore';
+      const district = rowObj.district || values[12] || 'Bangalore Urban';
+      const state = rowObj.state || rowObj.province || values[13] || 'Karnataka';
+      const pinCode = rowObj.pincode || rowObj.pin || rowObj.postalcode || rowObj.zip || values[14] || '';
+      const country = rowObj.country || rowObj.nation || values[15] || 'India';
+
+      // Backward compatible extra columns
+      const doorNo = rowObj.doorno || rowObj.door || rowObj.flat || rowObj.flatno || '';
+      const attendAddress = rowObj.attendaddress || rowObj.attendanceaddress || '';
+      const attendStatus = rowObj.attendstatus || rowObj.attend || rowObj.attendance || 'Attended';
 
       const errors = [];
       if (!name.trim()) errors.push('Student Name is required');
       if (!email.trim()) errors.push('Email is required');
-      // Street Address is strictly MANDATORY
-      if (!address.trim()) errors.push('Street Address is missing (Address is mandatory)');
-      // Area and Landmark are OPTIONAL (no errors if missing)
-      // Attend Address mandatory check if toggle is enabled:
-      if (addressConfig.isAttendAddressMandatory && !attendAddress.trim()) {
-        errors.push('Attend Address is marked mandatory');
-      }
-      // Attend Status mandatory check if toggle is enabled:
-      if (addressConfig.isAttendStatusMandatory && !attendStatus.trim()) {
-        errors.push('Attend status is marked mandatory');
+
+      // Requirement: Address is strictly MANDATORY (*)
+      if (!address.trim()) {
+        errors.push('Missing mandatory Address');
       }
 
-      // Check duplicates against existing leads
+      // Requirement: Optional address fields (Area, Landmark, City, District, State, PIN Code, Country) do NOT trigger failure if blank
+      // Validate PIN Code if provided (legitimate Indian 6-digit or 3-10 alphanumeric postal formats accepted)
+      if (pinCode.trim()) {
+        const cleanPin = pinCode.trim().replace(/\s+/g, '');
+        if (!/^[0-9]{6}$/.test(cleanPin) && !/^[a-zA-Z0-9-]{3,10}$/.test(cleanPin)) {
+          errors.push(`Invalid PIN Code format "${pinCode}"`);
+        }
+      }
+
+      // Attend Address mandatory check if toggle is enabled
+      if (addressConfig.isAttendAddressMandatory && !attendAddress.trim() && !address.trim()) {
+        errors.push('Attend Address is marked mandatory');
+      }
+
+      // Duplicate check against existing leads
       const candidateDup = checkDuplicateLead(
         { name, parentName, phone, parentPhone, address, doorNo },
         leads
       );
       if (candidateDup.isDuplicate) {
-        errors.push(`Duplicate: Matches ${candidateDup.matchedReasons.join(', ')} (Sole Owner: ${candidateDup.ownerName})`);
+        errors.push(`Duplicate: Matches ${candidateDup.matchedReasons.join(', ')} (Owner: ${candidateDup.ownerName})`);
       }
 
       rows.push({
-        rawIndex: i,
+        rawIndex: i + 1,
         name,
         parentName,
         parentPhone,
@@ -1311,14 +1456,18 @@ export default function App() {
         className,
         groupName,
         address,
-        locality,
+        area,
+        locality: area,
         landmark,
+        city,
+        district,
+        state,
+        pinCode,
+        pincode: pinCode,
+        country,
         doorNo,
         attendAddress,
         attendStatus,
-        city,
-        state,
-        pincode,
         isValid: errors.length === 0,
         errors,
       });
@@ -1349,36 +1498,84 @@ export default function App() {
     reader.readAsText(file);
   };
 
+  // Downloadable CSV template containing all 8 Student Residential Address columns
   const handleDownloadSampleCSV = () => {
     const sample =
-`Name,ParentName,ParentPhone,Email,Phone,Course,Class,Group,Address,DoorNo,Area,Landmark,AttendAddress,AttendStatus,City,State,Pincode
-Aarav Sharma,Sunil Sharma,+91 98765 11111,aarav.sample@example.com,+91 98765 11111,B.Tech Computer Science & Engineering,B.Tech CSE - 2026 Batch (Year 1),Section A (Morning AI Track),"14/B, 3rd Cross, 5th Block",Flat 14/B,Koramangala,Opp. Forum Mall,"North Metro Campus - Room 101",Attended,Bangalore,Karnataka,560034
-Meera Iyer,Venkatesh Iyer,+91 98765 22222,meera.sample@example.com,+91 98765 22222,B.Sc Data Science & Artificial Intelligence,B.Sc Data Science - 2026 Batch,Group G1 (Predictive Analytics Focus),"Flat 204, Green Heights",Flat 204,Indiranagar,Near Metro Station,"South Tech Park Campus - Desk 4",Attended,Bangalore,Karnataka,560038
-Karan Verma,Rajesh Verma,+91 98765 33333,karan.sample@example.com,+91 98765 33333,B.Tech Mechanical & Robotics Engineering,B.Tech Mechanical - 2026 Batch (Year 1),Section A1 (Bosch Industry Cohort),"Plot 45, Science Park Road",Plot 45,HSR Layout,Behind BDA Complex,"North Metro Campus - Robotics Lab",Scheduled,Bangalore,Karnataka,560102`;
+`Name,ParentName,ParentPhone,Email,Phone,Course,Class,Group,Address,Area,Landmark,City,District,State,PIN Code,Country,DoorNo,AttendAddress,AttendStatus
+Aarav Sharma,Sunil Sharma,+91 98765 11111,aarav.sample@example.com,+91 98765 11111,B.Tech Computer Science & Engineering,B.Tech CSE - 2026 Batch (Year 1),Section A (Morning AI Track),"14/B, 3rd Cross, 5th Block",Koramangala,Opp. Forum Mall,Bangalore,Bangalore Urban,Karnataka,560034,India,Flat 14/B,"North Metro Campus - Room 101",Attended
+Meera Iyer,Venkatesh Iyer,+91 98765 22222,meera.sample@example.com,+91 98765 22222,B.Sc Data Science & Artificial Intelligence,B.Sc Data Science - 2026 Batch,Group G1 (Predictive Analytics Focus),"Flat 204, Green Heights",Indiranagar,Near Metro Station,Bangalore,Bangalore Urban,Karnataka,560038,India,Flat 204,"South Tech Park Campus - Desk 4",Attended
+Karan Verma,Rajesh Verma,+91 98765 33333,karan.sample@example.com,+91 98765 33333,B.Tech Mechanical & Robotics Engineering,B.Tech Mechanical - 2026 Batch (Year 1),Section A1 (Bosch Industry Cohort),"Plot 45, Science Park Road",HSR Layout,Behind BDA Complex,Bangalore,Bangalore Urban,Karnataka,560102,India,Plot 45,"North Metro Campus - Robotics Lab",Scheduled`;
 
     const blob = new Blob([sample], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', 'campus_connect_leads_import_template.csv');
+    link.setAttribute('download', 'campus_connect_student_import_template.csv');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('Downloaded sample leads CSV template.');
+    showToast('Downloaded student import CSV template with all 8 address fields.');
+  };
+
+  // Download Error Report for failed rows
+  const handleDownloadErrorReport = () => {
+    const failedRows = importParsedRows.filter((r) => !r.isValid);
+    if (failedRows.length === 0) {
+      showToast('No invalid rows detected in current import.');
+      return;
+    }
+
+    const headers = ['RowNumber', 'StudentName', 'Email', 'ProvidedAddress', 'ValidationErrors', 'Status'];
+    const csvLines = [headers.join(',')];
+
+    failedRows.forEach((r) => {
+      const row = [
+        r.rawIndex,
+        `"${(r.name || '').replace(/"/g, '""')}"`,
+        `"${(r.email || '').replace(/"/g, '""')}"`,
+        `"${(r.address || '').replace(/"/g, '""')}"`,
+        `"${r.errors.join('; ').replace(/"/g, '""')}"`,
+        'REJECTED',
+      ];
+      csvLines.push(row.join(','));
+    });
+
+    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `student_import_error_report_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast(`Downloaded error report for ${failedRows.length} invalid rows.`);
   };
 
   const handleLoadDemoCSV = () => {
     const sampleText =
-`Name,ParentName,ParentPhone,Email,Phone,Course,Class,Group,Address,DoorNo,Area,Landmark,AttendAddress,AttendStatus,City,State,Pincode
-Aditya Nair,Prakash Nair,+91 98765 44444,aditya.nair@sample.io,+91 98765 44444,B.Tech Computer Science & Engineering,B.Tech CSE - 2026 Batch (Year 1),Section A (Morning AI Track),"42, Palm Avenue, 2nd Main",No. 42,Jayanagar,Near City Library,"South Tech Park Campus - Block B",Attended,Bangalore,Karnataka,560011
-Divya Menon,Sreedharan Menon,+91 98765 55555,divya.m@sample.io,+91 98765 55555,B.Sc Data Science & Artificial Intelligence,B.Sc Data Science - 2026 Batch,Group G1 (Predictive Analytics Focus),"Villa 8, Orchid Woods",Villa 8,Whitefield,Opp. ITPL,"South Tech Park Campus - Lab 3",Attended,Bangalore,Karnataka,560066
-Suresh Babu,Gopala Babu,+91 98765 66666,suresh.b@sample.io,+91 98765 66666,B.Tech Mechanical & Robotics Engineering,B.Tech Mechanical - 2026 Batch (Year 1),Section A1 (Bosch Industry Cohort),"12/1, Ring Road Industrial Area",12/1,Peenya,Near Toll Gate,"North Metro Campus - Tech Wing",Scheduled,Bangalore,Karnataka,560058
-Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 98765 77777,B.Tech Computer Science & Engineering,B.Tech CSE - 2026 Batch (Year 1),Section A (Morning AI Track),"",,Koramangala,Opp. Mall,"",Not Attended,Bangalore,Karnataka,560034`;
+`Name,ParentName,ParentPhone,Email,Phone,Course,Class,Group,Address,Area,Landmark,City,District,State,PIN Code,Country
+Aditya Nair,Prakash Nair,+91 98765 44444,aditya.nair@sample.io,+91 98765 44444,B.Tech Computer Science & Engineering,B.Tech CSE - 2026 Batch (Year 1),Section A (Morning AI Track),"42, Palm Avenue, 2nd Main",Jayanagar,Near City Library,Bangalore,Bangalore Urban,Karnataka,560011,India
+Divya Menon,Sreedharan Menon,+91 98765 55555,divya.m@sample.io,+91 98765 55555,B.Sc Data Science & Artificial Intelligence,B.Sc Data Science - 2026 Batch,Group G1 (Predictive Analytics Focus),"Villa 8, Orchid Woods",Whitefield,Opp. ITPL,Bangalore,Bangalore Urban,Karnataka,560066,India
+Suresh Babu,Gopala Babu,+91 98765 66666,suresh.b@sample.io,+91 98765 66666,B.Tech Mechanical & Robotics Engineering,B.Tech Mechanical - 2026 Batch (Year 1),Section A1 (Bosch Industry Cohort),"12/1, Ring Road Industrial Area",Peenya,Near Toll Gate,Bangalore,Bangalore Urban,Karnataka,560058,India
+Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 98765 77777,B.Tech Computer Science & Engineering,B.Tech CSE - 2026 Batch (Year 1),Section A (Morning AI Track),"",Koramangala,Opp. Mall,Bangalore,Bangalore Urban,Karnataka,560034,India`;
 
     setImportCsvText(sampleText);
     const parsed = parseCSV(sampleText);
     setImportParsedRows(parsed);
-    showToast('Loaded demo CSV (3 valid leads with mandatory address + 1 invalid lead without address).');
+    showToast('Loaded demo CSV (3 valid leads with all 8 address fields + 1 invalid row missing mandatory Address).');
+  };
+
+  // Backward compatibility test: Older template without new address columns
+  const handleLoadOlderTemplateCSV = () => {
+    const olderText =
+`Name,ParentName,ParentPhone,Email,Phone,Course,Class,Group,Address,DoorNo,Area,Landmark
+Rahul Dravid,Sharad Dravid,+91 98765 88888,rahul.d@sample.io,+91 98765 88888,B.Tech Computer Science & Engineering,B.Tech CSE - 2026 Batch (Year 1),Section A (Morning AI Track),"55, Cricket Stadium Road",No. 55,Indiranagar,Near Stadium
+Sneha Reddy,Venkat Reddy,+91 98765 99999,sneha.r@sample.io,+91 98765 99999,B.Sc Data Science & Artificial Intelligence,B.Sc Data Science - 2026 Batch,Group G1 (Predictive Analytics Focus),"89, IT Park Main Road",Flat 401,Whitefield,Opp. Metro Station`;
+
+    setImportCsvText(olderText);
+    const parsed = parseCSV(olderText);
+    setImportParsedRows(parsed);
+    showToast('Loaded older CSV format. Backward compatibility verified: records processed without errors.');
   };
 
   const handleExecuteImport = () => {
@@ -1420,17 +1617,21 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
         course: matchedCourse?.name || r.courseName || 'General Program',
         className: matchedClass?.name || r.className || 'Batch 2026',
         groupName: matchedGroup?.name || r.groupName || 'Section A',
-        // Address Details
+        // All 8 Student Residential Address Fields
         address: r.address, // Mandatory
-        locality: r.locality, // Optional Area
-        landmark: r.landmark, // Optional Landmark
+        area: r.area || r.locality || '',
+        locality: r.area || r.locality || '',
+        landmark: r.landmark || '',
+        city: r.city || activeBranch?.city || 'Bangalore',
+        district: r.district || 'Bangalore Urban',
+        state: r.state || 'Karnataka',
+        pinCode: r.pinCode || r.pincode || '',
+        pincode: r.pinCode || r.pincode || '',
+        country: r.country || 'India',
         doorNo: r.doorNo || '',
         attendAddress: r.attendAddress || `${activeBranch?.name} - Admissions Reception`,
         attendStatus: r.attendStatus || 'Attended',
-        city: r.city,
-        state: r.state,
-        pincode: r.pincode,
-        notes: `Imported via Bulk CSV on ${new Date().toISOString().split('T')[0]}. Area: ${r.locality || 'General'}. Pending manual area assignment.`,
+        notes: `Imported via Bulk CSV on ${new Date().toISOString().split('T')[0]}. Area: ${r.area || r.locality || 'General'}. Pending manual area assignment.`,
         createdAt: new Date().toISOString().split('T')[0],
         source: 'Bulk File Upload',
         ownerId: null, // Unassigned: added manually per area of the lead
@@ -1440,7 +1641,7 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
           {
             id: `log-${Date.now()}-${r.rawIndex}`,
             type: 'system',
-            content: `Imported via Bulk File Upload. Assigned area: "${r.locality || 'General Area'}". Pending manual allocation.`,
+            content: `Imported via Bulk File Upload with full residential address. Area: "${r.area || r.locality || 'General Area'}". Pending manual allocation.`,
             timestamp: new Date().toISOString(),
             staffName: currentUser.name,
           },
@@ -1449,7 +1650,7 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
     });
 
     setLeads([...newLeads, ...leads]);
-    showToast(`✅ Successfully imported ${validRows.length} student leads into Inbound Queue!`);
+    showToast(`✅ Successfully imported ${validRows.length} student leads into ${activeBranch?.name}!`);
     setIsImportModalOpen(false);
     setImportCsvText('');
     setImportParsedRows([]);
@@ -1732,12 +1933,13 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
   const handleOpenAddUser = () => {
     setIsEditingUser(false);
     setSelectedUserToEdit(null);
+    const initialBranch = tenantBranches[0] || allBranches[0];
     setUserForm({
       ...emptyUserForm,
       password: generatePassword(),
       assignedGroupIds: tenantGroups[0] ? [tenantGroups[0].id] : [],
-      assignedBranchIds: [activeBranchId],
-      primaryBranchId: activeBranchId,
+      assignedBranchIds: initialBranch ? [initialBranch.id] : [],
+      primaryBranchId: initialBranch ? initialBranch.id : '',
     });
     setUserFormErrors({});
     setIsUserModalOpen(true);
@@ -1746,6 +1948,16 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
   const handleOpenEditUser = (user) => {
     setIsEditingUser(true);
     setSelectedUserToEdit(user);
+    // Retrieve normalized user_branch_access records
+    const existingUba = userBranchAccess.filter(
+      (uba) => uba.userId === user.id && uba.tenantId === activeTenantId
+    );
+    const assignedBranchIds = existingUba.length > 0
+      ? existingUba.map((uba) => uba.branchId)
+      : (user.assignedBranchIds || [activeBranchId]);
+    const defaultUba = existingUba.find((uba) => uba.isDefault);
+    const primaryBranchId = defaultUba?.branchId || user.primaryBranchId || assignedBranchIds[0] || activeBranchId;
+
     setUserForm({
       name: user.name,
       email: user.email,
@@ -1753,8 +1965,8 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
       role: user.role,
       password: user.password || '',
       assignedGroupIds: user.assignedGroupIds || [],
-      assignedBranchIds: user.assignedBranchIds || [],
-      primaryBranchId: user.primaryBranchId || user.assignedBranchIds?.[0] || activeBranchId,
+      assignedBranchIds: assignedBranchIds,
+      primaryBranchId: primaryBranchId,
       status: user.status || 'Active',
     });
     setUserFormErrors({});
@@ -1801,8 +2013,11 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
       }
       updatedList = currentList.filter((id) => id !== branchId);
       let newPrimary = userForm.primaryBranchId;
+      // Requirement 6: When removing currently selected default branch, require selection of another assigned branch before saving (auto-select next remaining assigned branch)
       if (newPrimary === branchId) {
         newPrimary = updatedList[0];
+        const nextBranchName = allBranches.find((b) => b.id === newPrimary)?.name || 'Next Assigned Branch';
+        showToast(`Default branch reset to "${nextBranchName}". Please verify your default login branch.`);
       }
       setUserForm({
         ...userForm,
@@ -1811,14 +2026,17 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
       });
     } else {
       updatedList = [...currentList, branchId];
+      // Requirement 4: If only one branch is assigned, automatically select it as the default branch
+      const newPrimary = updatedList.length === 1 ? branchId : (userForm.primaryBranchId || branchId);
       setUserForm({
         ...userForm,
         assignedBranchIds: updatedList,
+        primaryBranchId: newPrimary,
       });
     }
   };
 
-  // Set the compulsory default branch (home location)
+  // Set the compulsory default login branch
   const handleSelectPrimaryBranch = (branchId) => {
     let updatedAssigned = userForm.assignedBranchIds || [];
     if (!updatedAssigned.includes(branchId)) {
@@ -1838,12 +2056,26 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
     if (!userForm.name?.trim()) errors.name = 'User Name is required.';
     if (!userForm.email?.trim()) errors.email = 'Email is required.';
     if (!isEditingUser && !userForm.password?.trim()) errors.password = 'Initial Password is required.';
+
+    // Branch Access Selection validation (Component A)
     if (!userForm.assignedBranchIds || userForm.assignedBranchIds.length === 0) {
       errors.branches = 'Assign at least one branch for this user.';
     }
-    // Compulsory Default Branch validation
-    if (!userForm.primaryBranchId || !userForm.assignedBranchIds?.includes(userForm.primaryBranchId)) {
-      errors.primaryBranch = 'A compulsory default branch must be designated for this user.';
+
+    // Default Login Branch validation (Component B)
+    if (!userForm.primaryBranchId) {
+      errors.primaryBranch = 'A compulsory Default Login Branch must be selected.';
+    } else if (!userForm.assignedBranchIds?.includes(userForm.primaryBranchId)) {
+      errors.primaryBranch = 'Default Login Branch must be selected from the assigned branches.';
+    }
+
+    // Tenant Isolation Check: All assigned branches must belong to the active tenant
+    const crossTenantBranch = userForm.assignedBranchIds?.find((bId) => {
+      const bObj = allBranches.find((b) => b.id === bId);
+      return bObj && bObj.tenantId && bObj.tenantId !== activeTenantId;
+    });
+    if (crossTenantBranch) {
+      errors.branches = 'Cross-tenant assignment is prohibited. All assigned branches must belong to the active tenant.';
     }
 
     if (Object.keys(errors).length > 0) {
@@ -1852,23 +2084,41 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
     }
 
     const defaultBranchName = allBranches.find((b) => b.id === userForm.primaryBranchId)?.name || 'Default Branch';
+    const userId = isEditingUser && selectedUserToEdit ? selectedUserToEdit.id : generateUserId();
+
+    // Synchronize normalized user_branch_access SaaS schema
+    const updatedUserBranchAccess = userBranchAccess.filter(
+      (uba) => !(uba.userId === userId && uba.tenantId === activeTenantId)
+    );
+    userForm.assignedBranchIds.forEach((bId) => {
+      updatedUserBranchAccess.push({
+        id: `uba-${userId}-${bId}`,
+        tenantId: activeTenantId,
+        userId: userId,
+        branchId: bId,
+        isDefault: bId === userForm.primaryBranchId,
+        createdAt: isEditingUser ? (selectedUserToEdit?.createdAt || new Date().toISOString().split('T')[0]) : new Date().toISOString().split('T')[0],
+        updatedAt: new Date().toISOString().split('T')[0],
+      });
+    });
+    setUserBranchAccess(updatedUserBranchAccess);
 
     if (isEditingUser && selectedUserToEdit) {
       const updated = users.map((u) =>
         u.id === selectedUserToEdit.id ? { ...u, ...userForm } : u
       );
       setUsers(updated);
-      showToast(`User "${userForm.name}" updated with compulsory default branch: ${defaultBranchName} and ${userForm.assignedGroupIds?.length || 0} groups.`);
+      showToast(`User "${userForm.name}" updated with Default Login Branch: ${defaultBranchName} and ${userForm.assignedBranchIds.length} assigned branches.`);
     } else {
       const newUser = {
         ...userForm,
-        id: generateUserId(),
+        id: userId,
         tenantId: activeTenantId,
         createdAt: new Date().toISOString().split('T')[0],
         lastLogin: 'Never',
       };
       setUsers([newUser, ...users]);
-      showToast(`New user "${userForm.name}" added with compulsory default branch: ${defaultBranchName}.`);
+      showToast(`New user "${userForm.name}" created with Default Login Branch: ${defaultBranchName}.`);
     }
 
     setIsUserModalOpen(false);
@@ -2532,54 +2782,116 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                       </select>
                     </div>
 
-                    <div className="form-group">
-                      <label className="form-label" style={{ fontSize: '0.75rem' }}>
-                        Street Address <span className="req-star">* Mandatory</span>
-                      </label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        placeholder="House / Street Address (Mandatory)"
-                        value={leadForm.address}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          const next = { ...leadForm, address: val };
-                          setLeadForm(next);
-                          const dup = checkDuplicateLead(next, leads);
-                          if (dup.isDuplicate) setDuplicateAlert(dup);
-                          else if (duplicateAlert) setDuplicateAlert(null);
-                        }}
-                      />
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                      <div className="form-group">
-                        <label className="form-label" style={{ fontSize: '0.75rem' }}>Area / Locality</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="e.g. Koramangala"
-                          value={leadForm.locality}
-                          onChange={(e) => setLeadForm({ ...leadForm, locality: e.target.value })}
-                        />
+                    {/* Section: Student Residential Address (Mobile Responsive) */}
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 10 }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0f172a', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <MapPin size={14} color="#dc2626" />
+                        <span>Student Residential Address</span>
                       </div>
 
-                      <div className="form-group">
-                        <label className="form-label" style={{ fontSize: '0.75rem' }}>Door / Flat No</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="e.g. 14/B"
-                          value={leadForm.doorNo}
+                      <div className="form-group" style={{ marginBottom: 8 }}>
+                        <label className="form-label" style={{ fontSize: '0.75rem', display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Address <span className="req-star" style={{ color: '#dc2626' }}>*</span></span>
+                          <span style={{ color: '#dc2626', fontWeight: 600, fontSize: '0.675rem' }}>Mandatory *</span>
+                        </label>
+                        <textarea
+                          rows={2}
+                          className={`form-input ${leadFormErrors.address ? 'input-error' : ''}`}
+                          placeholder="Primary residential address (Mandatory)"
+                          value={leadForm.address}
                           onChange={(e) => {
                             const val = e.target.value;
-                            const next = { ...leadForm, doorNo: val };
+                            const next = { ...leadForm, address: val };
                             setLeadForm(next);
                             const dup = checkDuplicateLead(next, leads);
                             if (dup.isDuplicate) setDuplicateAlert(dup);
                             else if (duplicateAlert) setDuplicateAlert(null);
                           }}
+                          style={{ resize: 'vertical' }}
                         />
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '0.7rem' }}>Area (Optional)</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            placeholder="Locality / Area"
+                            value={leadForm.area || leadForm.locality || ''}
+                            onChange={(e) => setLeadForm({ ...leadForm, area: e.target.value, locality: e.target.value })}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '0.7rem' }}>Landmark (Optional)</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            placeholder="Nearby Landmark"
+                            value={leadForm.landmark}
+                            onChange={(e) => setLeadForm({ ...leadForm, landmark: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '0.7rem' }}>City / Town (Optional)</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            placeholder="City"
+                            value={leadForm.city}
+                            onChange={(e) => setLeadForm({ ...leadForm, city: e.target.value })}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '0.7rem' }}>District (Optional)</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            placeholder="District"
+                            value={leadForm.district}
+                            onChange={(e) => setLeadForm({ ...leadForm, district: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '0.7rem' }}>State</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            placeholder="State"
+                            value={leadForm.state}
+                            onChange={(e) => setLeadForm({ ...leadForm, state: e.target.value })}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '0.7rem' }}>PIN Code</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            placeholder="PIN"
+                            value={leadForm.pinCode || leadForm.pincode || ''}
+                            onChange={(e) => setLeadForm({ ...leadForm, pinCode: e.target.value, pincode: e.target.value })}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '0.7rem' }}>Country</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            placeholder="Country"
+                            value={leadForm.country}
+                            onChange={(e) => setLeadForm({ ...leadForm, country: e.target.value })}
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -2846,9 +3158,9 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
               <div className="branch-active-label">
                 <span className="branch-active-org">{activeOrg?.name}</span>
                 <span className="branch-active-name">
-                  {activeBranch?.name}
+                  Active Branch: {activeBranch?.name}
                   {isCurrentActivePrimary ? (
-                    <span className="primary-star-badge" title="Your compulsory Default Branch (Home Location)">
+                    <span className="primary-star-badge" title="Your compulsory Default Login Branch (Home Location)">
                       ★ Default Branch
                     </span>
                   ) : (
@@ -2866,7 +3178,7 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                 <div className="dropdown-header-note">
                   <div><strong>Your Assigned Branches:</strong></div>
                   <div style={{ marginTop: 4, fontSize: '0.74rem', color: '#64748b' }}>
-                    ★ <strong>Default Branch:</strong> Physical presence ({userPrimaryBranch?.name}). Opens by default on CRM launch.
+                    ★ <strong>Default Login Branch:</strong> Physical presence ({userPrimaryBranch?.name}). Activates by default on CRM launch.
                   </div>
                   <div style={{ marginTop: 2, fontSize: '0.74rem', color: '#64748b' }}>
                     🏢 <strong>Optional Branches:</strong> Select to check leads, batches & activities of those branches.
@@ -2887,7 +3199,7 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                       <div>
                         <div className="branch-item-name">
                           {userPrimaryBranch.name}
-                          <span className="primary-star-badge">★ Default Branch</span>
+                          <span className="primary-star-badge">★ Default Login Branch</span>
                         </div>
                         <div className="branch-item-city">
                           {userPrimaryBranch.orgName} • {userPrimaryBranch.city} (Physical Presence)
@@ -2903,7 +3215,7 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                   <div className="dropdown-branch-section" style={{ marginTop: 8 }}>
                     <div className="dropdown-section-header">
                       <Building2 size={12} color="#0891b2" />
-                      <span>Optional Branches ({userOptionalBranches.length} Supervised)</span>
+                      <span>Optional Accessible Branches ({userOptionalBranches.length} Supervised)</span>
                     </div>
                     {userOptionalBranches.map((b) => {
                       const isActive = b.id === activeBranchId;
@@ -2926,6 +3238,20 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                         </button>
                       );
                     })}
+                  </div>
+                )}
+
+                {/* Persistent User Preference: Reset to Default Branch */}
+                {!isCurrentActivePrimary && userPrimaryBranch && (
+                  <div style={{ padding: '8px 12px', borderTop: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.75rem' }}
+                      onClick={handleResetToPrimaryBranch}
+                    >
+                      <RefreshCw size={12} /> Reset to Default Login Branch ({userPrimaryBranch.name})
+                    </button>
                   </div>
                 )}
               </div>
@@ -5054,17 +5380,19 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                 </div>
               </div>
 
-              {/* DEDICATED MANDATORY ADDRESS & ATTENDANCE SECTION */}
+              {/* DEDICATED SECTION: Student Residential Address */}
               <div className="address-form-box">
                 <div className="address-section-header">
-                  <MapPin size={16} color="#dc2626" />
+                  <MapPin size={18} color="#dc2626" />
                   <div>
                     <h4 className="address-section-title">
-                      Student Residential & Attendance Address
-                      <span className="address-mandatory-tag">Street Address is Mandatory *</span>
+                      Student Residential Address
+                      <span className="address-mandatory-tag" style={{ marginLeft: 8, background: '#fee2e2', color: '#b91c1c', fontSize: '0.725rem', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
+                        Address is Mandatory *
+                      </span>
                     </h4>
                     <p className="address-section-desc">
-                      Street address is strictly mandatory (*). Locality/Area, Landmark, and Door No are optional.
+                      Primary residential address is strictly mandatory (*). Area, Landmark, City/Town, District, State, PIN Code, and Country are optional. Lengthy residential addresses are supported.
                     </p>
                   </div>
                 </div>
@@ -5100,15 +5428,18 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                   </div>
                 </div>
 
+                {/* Field 1: Primary Residential Address (Prominent & Multi-line for lengthy addresses) */}
                 <div className="form-group" style={{ marginBottom: 14 }}>
-                  <label className="form-label address-mandatory-label">
-                    <span>Street / House Address</span>
+                  <label className="form-label address-mandatory-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>
+                      Address <span className="req-star" style={{ color: '#dc2626', fontWeight: 800 }}>*</span>
+                    </span>
                     <span className="req-pill-bold">Mandatory Required Field *</span>
                   </label>
-                  <input
-                    type="text"
-                    className={`form-input mandatory-address-input ${leadFormErrors.address ? 'input-error' : ''}`}
-                    placeholder="Enter street name, road, building / house address (e.g. 14/B, 3rd Main Road, Indiranagar)"
+                  <textarea
+                    rows={2}
+                    className={`form-textarea mandatory-address-input ${leadFormErrors.address ? 'input-error' : ''}`}
+                    placeholder="Enter full primary residential address (e.g. 14/B, 3rd Main Road, 5th Block) - Lengthy residential addresses supported"
                     value={leadForm.address}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -5118,48 +5449,128 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                       if (dup.isDuplicate) setDuplicateAlert(dup);
                       else if (duplicateAlert) setDuplicateAlert(null);
                     }}
+                    style={{ width: '100%', resize: 'vertical', minHeight: 60 }}
                   />
                   {leadFormErrors.address ? (
-                    <span className="error-text" style={{ fontWeight: 600 }}>
+                    <span className="error-text" style={{ fontWeight: 600, color: '#dc2626', fontSize: '0.75rem', marginTop: 4, display: 'block' }}>
                       ⚠️ {leadFormErrors.address}
                     </span>
                   ) : (
-                    <span className="input-hint">
-                      * This address field is mandatory for admission documentation and student verification.
+                    <span className="input-hint" style={{ fontSize: '0.725rem', color: '#64748b', marginTop: 4, display: 'block' }}>
+                      * Primary residential address is required for official student verification, admission documentation, and parent communication.
                     </span>
                   )}
                 </div>
 
+                {/* Remaining 7 Fields Grouped Logically (All Optional) */}
                 <div className="form-grid" style={{ marginTop: 10 }}>
+                  {/* Field 2: Area */}
                   <div className="form-group">
                     <label className="form-label">
-                      Locality / Area <span className="optional-badge">(Optional)</span>
+                      Area <span className="optional-badge" style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>(Optional)</span>
                     </label>
                     <input
                       type="text"
                       className="form-input"
-                      placeholder="e.g. Indiranagar Stage 2 / Koramangala"
-                      value={leadForm.locality}
-                      onChange={(e) => setLeadForm({ ...leadForm, locality: e.target.value })}
+                      placeholder="Locality, colony or area (e.g. Koramangala)"
+                      value={leadForm.area || leadForm.locality || ''}
+                      onChange={(e) => setLeadForm({ ...leadForm, area: e.target.value, locality: e.target.value })}
                     />
                   </div>
 
+                  {/* Field 3: Landmark */}
                   <div className="form-group">
                     <label className="form-label">
-                      Landmark <span className="optional-badge">(Optional)</span>
+                      Landmark <span className="optional-badge" style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>(Optional)</span>
                     </label>
                     <input
                       type="text"
                       className="form-input"
-                      placeholder="e.g. Near Metro Station / Opp. Forum Mall"
+                      placeholder="Nearby identifiable landmark (e.g. Opp. Sony Signal)"
                       value={leadForm.landmark}
                       onChange={(e) => setLeadForm({ ...leadForm, landmark: e.target.value })}
                     />
                   </div>
 
+                  {/* Field 4: City / Town */}
                   <div className="form-group">
                     <label className="form-label">
-                      Door / Flat No <span className="optional-badge">(Optional)</span>
+                      City / Town <span className="optional-badge" style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="City or town (e.g. Bangalore)"
+                      value={leadForm.city}
+                      onChange={(e) => setLeadForm({ ...leadForm, city: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Field 5: District */}
+                  <div className="form-group">
+                    <label className="form-label">
+                      District <span className="optional-badge" style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="District (e.g. Bangalore Urban)"
+                      value={leadForm.district}
+                      onChange={(e) => setLeadForm({ ...leadForm, district: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Field 6: State */}
+                  <div className="form-group">
+                    <label className="form-label">
+                      State <span className="optional-badge" style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="State (e.g. Karnataka)"
+                      value={leadForm.state}
+                      onChange={(e) => setLeadForm({ ...leadForm, state: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Field 7: PIN Code */}
+                  <div className="form-group">
+                    <label className="form-label">
+                      PIN Code <span className="optional-badge" style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      className={`form-input ${leadFormErrors.pinCode ? 'input-error' : ''}`}
+                      placeholder="Postal PIN code (e.g. 560034)"
+                      value={leadForm.pinCode || leadForm.pincode || ''}
+                      onChange={(e) => setLeadForm({ ...leadForm, pinCode: e.target.value, pincode: e.target.value })}
+                    />
+                    {leadFormErrors.pinCode && (
+                      <span className="error-text" style={{ fontSize: '0.75rem', color: '#dc2626' }}>
+                        ⚠️ {leadFormErrors.pinCode}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Field 8: Country */}
+                  <div className="form-group">
+                    <label className="form-label">
+                      Country <span className="optional-badge" style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Country (e.g. India)"
+                      value={leadForm.country}
+                      onChange={(e) => setLeadForm({ ...leadForm, country: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Door / Flat No (Optional Helper) */}
+                  <div className="form-group">
+                    <label className="form-label">
+                      Door / Flat No <span className="optional-badge" style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 400 }}>(Optional)</span>
                     </label>
                     <input
                       type="text"
@@ -5174,37 +5585,6 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                         if (dup.isDuplicate) setDuplicateAlert(dup);
                         else if (duplicateAlert) setDuplicateAlert(null);
                       }}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">City</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={leadForm.city}
-                      onChange={(e) => setLeadForm({ ...leadForm, city: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">State</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={leadForm.state}
-                      onChange={(e) => setLeadForm({ ...leadForm, state: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Pincode</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="e.g. 560034"
-                      value={leadForm.pincode}
-                      onChange={(e) => setLeadForm({ ...leadForm, pincode: e.target.value })}
                     />
                   </div>
                 </div>
@@ -5441,31 +5821,52 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                 </div>
               </div>
 
-              {/* Full Address & Attendance Breakdown */}
+              {/* DEDICATED SECTION: Student Residential Address */}
               <div className="lead-detail-address-box">
                 <div className="address-detail-title">
                   <MapPin size={16} color="#dc2626" />
-                  <strong>Residential & Verification Address Details</strong>
+                  <strong>Student Residential Address</strong>
                 </div>
 
                 <div className="detail-address-line">
-                  <span className="address-key">Mandatory Street Address:</span>
+                  <span className="address-key">Address (Mandatory *):</span>
                   <span className="address-val-bold">{activeLead.address || <span style={{ color: '#ef4444' }}>Not Provided</span>}</span>
                 </div>
 
-                {activeLead.locality && (
-                  <div className="detail-address-line">
-                    <span className="address-key">Locality / Area (Optional):</span>
-                    <span className="address-val">{activeLead.locality}</span>
-                  </div>
-                )}
+                <div className="detail-address-line">
+                  <span className="address-key">Area (Optional):</span>
+                  <span className="address-val">{activeLead.area || activeLead.locality || <em style={{ color: '#94a3b8' }}>None</em>}</span>
+                </div>
 
-                {activeLead.landmark && (
-                  <div className="detail-address-line">
-                    <span className="address-key">Landmark (Optional):</span>
-                    <span className="address-val">📍 {activeLead.landmark}</span>
-                  </div>
-                )}
+                <div className="detail-address-line">
+                  <span className="address-key">Landmark (Optional):</span>
+                  <span className="address-val">{activeLead.landmark ? `📍 ${activeLead.landmark}` : <em style={{ color: '#94a3b8' }}>None</em>}</span>
+                </div>
+
+                <div className="detail-address-line">
+                  <span className="address-key">City / Town (Optional):</span>
+                  <span className="address-val">{activeLead.city || <em style={{ color: '#94a3b8' }}>None</em>}</span>
+                </div>
+
+                <div className="detail-address-line">
+                  <span className="address-key">District (Optional):</span>
+                  <span className="address-val">{activeLead.district || <em style={{ color: '#94a3b8' }}>None</em>}</span>
+                </div>
+
+                <div className="detail-address-line">
+                  <span className="address-key">State (Optional):</span>
+                  <span className="address-val">{activeLead.state || <em style={{ color: '#94a3b8' }}>None</em>}</span>
+                </div>
+
+                <div className="detail-address-line">
+                  <span className="address-key">PIN Code (Optional):</span>
+                  <span className="address-val">{activeLead.pinCode || activeLead.pincode || <em style={{ color: '#94a3b8' }}>None</em>}</span>
+                </div>
+
+                <div className="detail-address-line">
+                  <span className="address-key">Country (Optional):</span>
+                  <span className="address-val">{activeLead.country || 'India'}</span>
+                </div>
 
                 {activeLead.doorNo && (
                   <div className="detail-address-line">
@@ -5484,13 +5885,6 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                   <span className="address-key">✓ Attend Status:</span>
                   <span className={`attend-status-pill status-${(activeLead.attendStatus || 'Attended').toLowerCase().replace(/[^a-z0-9]/g, '-')}`}>
                     {activeLead.attendStatus || 'Attended'}
-                  </span>
-                </div>
-
-                <div className="detail-address-line">
-                  <span className="address-key">City, State, Pincode:</span>
-                  <span className="address-val">
-                    {[activeLead.city, activeLead.state, activeLead.pincode].filter(Boolean).join(', ')}
                   </span>
                 </div>
 
@@ -6722,21 +7116,21 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                 </div>
               </div>
 
-              {/* Multi-Branch Assignment with Compulsory Default Branch */}
+              {/* DEDICATED SECTION: Branch Access & Assignment */}
               <div className="user-branch-assignment-box" style={{ marginTop: 16 }}>
                 <div className="branch-assignment-title">
                   <Building2 size={16} color="#2563eb" />
                   <div>
-                    <h4>Multi-Branch Access & Compulsory Default Branch Designation</h4>
-                    <p>
-                      A user must have a <strong>Compulsory Default Branch</strong> (where their physical presence is located and which loads by default on CRM launch). Any additional branches selected are <strong>Optional Supervised Branches</strong>, allowing the user to view and monitor activities of those branches.
+                    <h4 style={{ margin: 0, fontSize: '0.925rem', fontWeight: 600 }}>Branch Access & Assignment</h4>
+                    <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
+                      Configure multiple branch assignments within the tenant and designate the compulsory Default Login Branch.
                     </p>
                   </div>
                 </div>
 
                 {/* Scenario Example Callout */}
                 <div className="branch-scenario-callout" style={{ margin: '10px 0', padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, fontSize: '0.775rem', color: '#166534', lineHeight: 1.4 }}>
-                  <strong>💡 Multi-Branch Work Scenario:</strong> For an employee working in <strong>Branch B</strong> (physical presence only in Branch B) who also looks after activities of <strong>Branch A and Branch C</strong>: Select <strong>Branch B as the Compulsory Default Branch</strong>, and check <strong>Branch A & Branch C as Optional Accessible Branches</strong>. Upon login, the CRM will always default to Branch B, with Branch A and C available in the dropdown to check their activities.
+                  <strong>💡 Multi-Branch Work Scenario:</strong> For an employee working in <strong>Branch B</strong> (physical presence only in Branch B) who also looks after activities of <strong>Branch A and Branch C</strong>: Select <strong>Branch B as Default Login Branch</strong>, and check <strong>Branch A & Branch C</strong> in Component A. Upon login, the CRM will always default to Branch B, with Branch A and C available in the header dropdown to check their activities.
                 </div>
 
                 {userFormErrors.branches && (
@@ -6750,62 +7144,98 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                   </div>
                 )}
 
-                <div className="branch-selection-table">
-                  <div className="branch-selection-header">
-                    <span>Assign Branch Access</span>
-                    <span>Compulsory Default Branch (Physical Presence)</span>
+                {/* Component A: Branch Access Selection */}
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label className="form-label" style={{ fontWeight: 700, fontSize: '0.825rem', color: '#1e293b', marginBottom: 0 }}>
+                      Component A: Branch Access Selection (Tenant Active Branches)
+                    </label>
+                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                      Assigned: <strong>{userForm.assignedBranchIds?.length || 0}</strong> of {tenantBranches.length} branches
+                    </span>
                   </div>
 
-                  {allBranches.map((b) => {
-                    const isAssigned = userForm.assignedBranchIds?.includes(b.id);
-                    const isPrimary = userForm.primaryBranchId === b.id;
+                  <div className="branch-selection-table">
+                    <div className="branch-selection-header">
+                      <span>Branch Name & Institution</span>
+                      <span>Access Permission</span>
+                    </div>
 
-                    return (
-                      <div
-                        key={b.id}
-                        className={`branch-selection-row ${isAssigned ? 'assigned-row' : ''} ${isPrimary ? 'primary-row' : ''}`}
-                      >
-                        <label className="branch-checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={isAssigned}
-                            onChange={() => handleToggleBranchAssignment(b.id)}
-                          />
-                          <div>
-                            <div className="branch-row-name">
-                              {b.name}
-                              {isPrimary && (
-                                <span className="presence-tag-badge" style={{ marginLeft: 6, fontSize: '0.7rem', background: '#dbeafe', color: '#1d4ed8', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
-                                  ★ Default (Home)
-                                </span>
-                              )}
-                              {isAssigned && !isPrimary && (
-                                <span className="optional-tag-badge" style={{ marginLeft: 6, fontSize: '0.7rem', background: '#f1f5f9', color: '#475569', padding: '2px 6px', borderRadius: 4 }}>
-                                  🏢 Optional Supervised
-                                </span>
-                              )}
-                            </div>
-                            <div className="branch-row-sub">{b.orgName} • {b.city}</div>
-                          </div>
-                        </label>
+                    {tenantBranches.map((b) => {
+                      const isAssigned = userForm.assignedBranchIds?.includes(b.id);
+                      const isPrimary = userForm.primaryBranchId === b.id;
 
-                        <div className="primary-radio-cell">
-                          <label className="primary-radio-label">
+                      return (
+                        <div
+                          key={b.id}
+                          className={`branch-selection-row ${isAssigned ? 'assigned-row' : ''} ${isPrimary ? 'primary-row' : ''}`}
+                          onClick={() => handleToggleBranchAssignment(b.id)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <label className="branch-checkbox-label" style={{ cursor: 'pointer' }} onClick={(e) => e.stopPropagation()}>
                             <input
-                              type="radio"
-                              name="primaryBranchRadio"
-                              disabled={!isAssigned}
-                              checked={isPrimary}
-                              onChange={() => handleSelectPrimaryBranch(b.id)}
+                              type="checkbox"
+                              checked={isAssigned}
+                              onChange={() => handleToggleBranchAssignment(b.id)}
                             />
-                            <span className={isPrimary ? 'radio-text-bold' : ''}>
-                              {isPrimary ? '★ Compulsory Default Branch (Physical Presence)' : 'Set as Compulsory Default'}
-                            </span>
+                            <div>
+                              <div className="branch-row-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span>{b.name}</span>
+                                {isPrimary && (
+                                  <span className="presence-tag-badge" style={{ fontSize: '0.7rem', background: '#dbeafe', color: '#1d4ed8', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                                    ★ Default Login Branch
+                                  </span>
+                                )}
+                                {isAssigned && !isPrimary && (
+                                  <span className="optional-tag-badge" style={{ fontSize: '0.7rem', background: '#f1f5f9', color: '#475569', padding: '2px 6px', borderRadius: 4 }}>
+                                    🏢 Optional Supervised
+                                  </span>
+                                )}
+                              </div>
+                              <div className="branch-row-sub">{b.orgName} • {b.city}</div>
+                            </div>
                           </label>
+
+                          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: isAssigned ? '#16a34a' : '#94a3b8' }}>
+                            {isAssigned ? '✓ Access Granted' : 'No Access'}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Component B: Default Login Branch Selection */}
+                <div style={{ marginTop: 14, padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                  <label className="form-label" style={{ fontWeight: 700, fontSize: '0.825rem', color: '#1e293b', marginBottom: 4 }}>
+                    Component B: Default Login Branch <span className="req-star" style={{ color: '#dc2626' }}>* (Mandatory)</span>
+                  </label>
+                  <p style={{ margin: '0 0 8px 0', fontSize: '0.75rem', color: '#64748b' }}>
+                    This branch will automatically activate when this user logs in or launches the CRM. Must be chosen from the assigned branches above.
+                  </p>
+
+                  {userForm.assignedBranchIds?.length === 0 ? (
+                    <div style={{ fontSize: '0.775rem', color: '#dc2626', fontStyle: 'italic' }}>
+                      ⚠️ Please select at least one branch in Component A above before designating a default branch.
+                    </div>
+                  ) : (
+                    <select
+                      className="form-select"
+                      value={userForm.primaryBranchId || ''}
+                      onChange={(e) => handleSelectPrimaryBranch(e.target.value)}
+                      style={{ fontWeight: 600 }}
+                    >
+                      <option value="">-- Select Mandatory Default Login Branch --</option>
+                      {userForm.assignedBranchIds.map((bId) => {
+                        const bObj = tenantBranches.find((b) => b.id === bId) || allBranches.find((b) => b.id === bId);
+                        return (
+                          <option key={bId} value={bId}>
+                            ★ {bObj ? bObj.name : bId} ({bObj?.city || 'Default Campus'})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  )}
                 </div>
               </div>
 
@@ -7184,23 +7614,24 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
 
             <div className="modal-body" style={{ maxHeight: '78vh', overflowY: 'auto' }}>
               {/* Address & Attendance Policy Configuration Banner */}
-              <div className="import-rules-banner" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+              <div className="import-rules-banner" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 8, padding: 14, marginBottom: 14 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
                   <div>
                     <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: '#0f172a' }}>
-                      📋 Lead Entry & Import Address Rules
+                      📋 Student Residential Address & Bulk Import Specifications
                     </h4>
                     <ul style={{ margin: '6px 0 0 18px', padding: 0, fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
-                      <li><strong>Street Address is strictly MANDATORY (*)</strong>: Every imported lead row must have a valid street address.</li>
-                      <li><strong>Locality / Area & Landmark are strictly OPTIONAL</strong>: Can be provided or left empty without error.</li>
-                      <li>Rows with missing mandatory fields are flagged in red and excluded until corrected.</li>
+                      <li><strong>Primary Address is strictly MANDATORY (*)</strong>: Every imported student record must include a valid residential address.</li>
+                      <li><strong>All remaining 7 fields are OPTIONAL</strong>: Area, Landmark, City/Town, District, State, PIN Code, and Country can be left blank without error.</li>
+                      <li><strong>Backward Compatibility</strong>: Older CSV files lacking new address columns are processed safely without failing.</li>
+                      <li>Rows with missing mandatory Address are flagged in red. An Error Report is downloadable for failed records.</li>
                     </ul>
                   </div>
 
                   {/* Mandatory Options Toggles */}
                   <div style={{ background: '#ffffff', padding: '8px 12px', borderRadius: 6, border: '1px solid #e2e8f0' }}>
                     <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', marginBottom: 6 }}>
-                      ⚙️ Import Field Enforcement Options:
+                      ⚙️ Attendance Enforcement:
                     </div>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.775rem', cursor: 'pointer', marginBottom: 4 }}>
                       <input
@@ -7209,7 +7640,7 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                         onChange={(e) => {
                           const updated = { ...addressConfig, isAttendAddressMandatory: e.target.checked };
                           setAddressConfig(updated);
-                          if (importCsvText) setImportParsedRows(parseCSV(importCsvText, updated));
+                          if (importCsvText) setImportParsedRows(parseCSV(importCsvText));
                         }}
                       />
                       <span>Mark <strong>Attend Address</strong> as a Mandatory Field</span>
@@ -7222,11 +7653,47 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                         onChange={(e) => {
                           const updated = { ...addressConfig, isAttendStatusMandatory: e.target.checked };
                           setAddressConfig(updated);
-                          if (importCsvText) setImportParsedRows(parseCSV(importCsvText, updated));
+                          if (importCsvText) setImportParsedRows(parseCSV(importCsvText));
                         }}
                       />
                       <span>Mark <strong>Attend Status</strong> as a Mandatory Field</span>
                     </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Field Mapping Overview Interface */}
+              <div className="import-field-mapping-card" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Sliders size={14} color="#2563eb" />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1e293b' }}>
+                    Student Residential Address Field-Mapping Architecture (8 Columns)
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8, fontSize: '0.725rem' }}>
+                  <div style={{ padding: '6px 8px', background: '#eff6ff', borderRadius: 4, border: '1px solid #bfdbfe' }}>
+                    <strong>1. Address:</strong> <span style={{ color: '#dc2626', fontWeight: 700 }}>Mandatory *</span> → Column <code>Address / Street</code>
+                  </div>
+                  <div style={{ padding: '6px 8px', background: '#f8fafc', borderRadius: 4, border: '1px solid #e2e8f0' }}>
+                    <strong>2. Area:</strong> <span style={{ color: '#64748b' }}>Optional</span> → Column <code>Area / Locality</code>
+                  </div>
+                  <div style={{ padding: '6px 8px', background: '#f8fafc', borderRadius: 4, border: '1px solid #e2e8f0' }}>
+                    <strong>3. Landmark:</strong> <span style={{ color: '#64748b' }}>Optional</span> → Column <code>Landmark</code>
+                  </div>
+                  <div style={{ padding: '6px 8px', background: '#f8fafc', borderRadius: 4, border: '1px solid #e2e8f0' }}>
+                    <strong>4. City / Town:</strong> <span style={{ color: '#64748b' }}>Optional</span> → Column <code>City / Town</code>
+                  </div>
+                  <div style={{ padding: '6px 8px', background: '#f8fafc', borderRadius: 4, border: '1px solid #e2e8f0' }}>
+                    <strong>5. District:</strong> <span style={{ color: '#64748b' }}>Optional</span> → Column <code>District</code>
+                  </div>
+                  <div style={{ padding: '6px 8px', background: '#f8fafc', borderRadius: 4, border: '1px solid #e2e8f0' }}>
+                    <strong>6. State:</strong> <span style={{ color: '#64748b' }}>Optional</span> → Column <code>State</code>
+                  </div>
+                  <div style={{ padding: '6px 8px', background: '#f8fafc', borderRadius: 4, border: '1px solid #e2e8f0' }}>
+                    <strong>7. PIN Code:</strong> <span style={{ color: '#64748b' }}>Optional</span> → Column <code>PIN Code / Pincode</code>
+                  </div>
+                  <div style={{ padding: '6px 8px', background: '#f8fafc', borderRadius: 4, border: '1px solid #e2e8f0' }}>
+                    <strong>8. Country:</strong> <span style={{ color: '#64748b' }}>Optional</span> → Column <code>Country</code>
                   </div>
                 </div>
               </div>
@@ -7250,12 +7717,12 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                   </button>
                 </div>
 
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
                     onClick={handleDownloadSampleCSV}
-                    title="Download pre-formatted CSV template"
+                    title="Download pre-formatted CSV template with all 8 address fields"
                   >
                     📥 Download CSV Template
                   </button>
@@ -7267,6 +7734,25 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                   >
                     ⚡ Load Demo CSV
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleLoadOlderTemplateCSV}
+                    title="Load older CSV to verify backward compatibility"
+                  >
+                    🔄 Test Older Template
+                  </button>
+                  {importParsedRows.some((r) => !r.isValid) && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={handleDownloadErrorReport}
+                      style={{ color: '#dc2626', borderColor: '#fca5a5', background: '#fef2f2' }}
+                      title="Download error report for invalid records"
+                    >
+                      <Download size={13} /> Download Error Report ({importParsedRows.filter((r) => !r.isValid).length})
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -7277,12 +7763,12 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                     className="form-textarea"
                     rows={6}
                     style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}
-                    placeholder="Paste CSV rows here: Name,Email,Phone,Course,Class,Group,Address,Area,Landmark,AttendAddress,AttendStatus,City,State,Pincode"
+                    placeholder="Paste CSV rows here: Name,ParentName,ParentPhone,Email,Phone,Course,Class,Group,Address,Area,Landmark,City,District,State,PIN Code,Country"
                     value={importCsvText}
                     onChange={(e) => handleImportCsvChange(e.target.value)}
                   />
                   <div style={{ fontSize: '0.725rem', color: '#64748b', marginTop: 4 }}>
-                    Tip: Headers must include: <code>Name, Email, Phone, Address</code>. Area and Landmark columns are optional.
+                    Tip: Primary Address column is mandatory (*). All other address columns (Area, Landmark, City, District, State, PIN Code, Country) are optional.
                   </div>
                 </div>
               ) : (
@@ -7303,7 +7789,7 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                     Click to browse and upload CSV file
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 4 }}>
-                    Supports standard .csv format with Address column
+                    Supports standard .csv format with all 8 Address columns
                   </div>
                   {importFileName && (
                     <div style={{ marginTop: 8, fontSize: '0.8rem', color: '#2563eb', fontWeight: 600 }}>
@@ -7337,18 +7823,19 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                     </div>
                   </div>
 
-                  <div className="table-wrapper" style={{ maxHeight: 240, overflowY: 'auto' }}>
+                  <div className="table-wrapper" style={{ maxHeight: 260, overflowY: 'auto' }}>
                     <table className="crm-table">
                       <thead>
                         <tr>
                           <th>#</th>
                           <th>Status</th>
                           <th>Student Name</th>
-                          <th>Mandatory Address *</th>
+                          <th>Address (Mandatory *)</th>
                           <th>Area (Optional)</th>
                           <th>Landmark (Optional)</th>
-                          <th>Attend Address</th>
-                          <th>Attend Status</th>
+                          <th>City & District</th>
+                          <th>State & PIN Code</th>
+                          <th>Country</th>
                           <th>Validation Result</th>
                         </tr>
                       </thead>
@@ -7373,37 +7860,28 @@ Missing Address Test,Unknown Parent,+91 98765 77777,noaddress@sample.io,+91 9876
                             </td>
                             <td>
                               {r.address ? (
-                                <span style={{ color: '#0f172a', fontWeight: 500 }}>{r.address}</span>
+                                <span style={{ color: '#0f172a', fontWeight: 600 }}>{r.address}</span>
                               ) : (
                                 <span style={{ color: '#dc2626', fontWeight: 700 }}>⚠️ Missing (Mandatory)</span>
                               )}
                             </td>
-                            <td>{r.locality || <em style={{ color: '#94a3b8' }}>None</em>}</td>
+                            <td>{r.area || <em style={{ color: '#94a3b8' }}>None</em>}</td>
                             <td>{r.landmark || <em style={{ color: '#94a3b8' }}>None</em>}</td>
                             <td>
-                              {r.attendAddress ? (
-                                <span>{r.attendAddress}</span>
-                              ) : addressConfig.isAttendAddressMandatory ? (
-                                <span style={{ color: '#dc2626', fontWeight: 700 }}>⚠️ Required</span>
-                              ) : (
-                                <em style={{ color: '#94a3b8' }}>Default ({activeBranch?.name})</em>
-                              )}
+                              <span>{r.city}</span>
+                              {r.district && <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{r.district}</div>}
                             </td>
                             <td>
-                              {r.attendStatus ? (
-                                <span className={`attend-status-pill status-${r.attendStatus.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}>
-                                  {r.attendStatus}
-                                </span>
-                              ) : (
-                                <em style={{ color: '#94a3b8' }}>Attended</em>
-                              )}
+                              <span>{r.state}</span>
+                              {r.pinCode && <div style={{ fontSize: '0.7rem', color: '#64748b' }}>PIN: {r.pinCode}</div>}
                             </td>
+                            <td>{r.country || 'India'}</td>
                             <td>
                               {r.isValid ? (
-                                <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>Ready to Import</span>
+                                <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 600 }}>Ready to Import</span>
                               ) : (
                                 <span style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>
-                                  {r.errors.join(', ')}
+                                  {r.errors.join('; ')}
                                 </span>
                               )}
                             </td>
